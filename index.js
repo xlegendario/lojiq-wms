@@ -96,7 +96,15 @@ app.post("/api/lookup-product", async (req, res) => {
 app.post("/api/submit-inbound", async (req, res) => {
   try {
     const trackingNumber = asText(req.body?.tracking_number);
+    const submittedType = asText(req.body?.type);
     const items = Array.isArray(req.body?.items) ? req.body.items : [];
+    const typeToSave =
+      submittedType === "Consignment" ||
+      submittedType === "Forwarding" ||
+      submittedType === "Regular"
+        ? submittedType
+        : null;
+    "Type": typeToSave
 
     if (!trackingNumber) {
       return res.status(400).json({ error: "Missing tracking_number" });
@@ -175,6 +183,7 @@ app.post("/api/submit-inbound", async (req, res) => {
           "SKU": sku,
           "Size": size,
           "Quantity": quantity,
+          "Type": typeToSave,
           "Status": "Verified",
           "Verified At": now,
           "Received At": receivedAtToUse
@@ -186,17 +195,17 @@ app.post("/api/submit-inbound", async (req, res) => {
 
       // If no actual GTIN row exists yet, but we still have a placeholder row,
       // use that placeholder for the first product instead of creating a new row
-      if (placeholderRecord) {
-        await airtable(AIRTABLE_INCOMING_STOCK_TABLE).update(placeholderRecord.id, {
-          "Tracking Number": trackingNumber,
-          "Product GTIN": gtin,
-          "SKU": sku,
-          "Size": size,
-          "Quantity": quantity,
-          "Status": "Verified",
-          "Verified At": now,
-          "Received At": receivedAtToUse
-        });
+      await airtable(AIRTABLE_INCOMING_STOCK_TABLE).update(placeholderRecord.id, {
+        "Tracking Number": trackingNumber,
+        "Product GTIN": gtin,
+        "SKU": sku,
+        "Size": size,
+        "Quantity": quantity,
+        "Type": typeToSave,
+        "Status": "Verified",
+        "Verified At": now,
+        "Received At": receivedAtToUse
+      });
 
         updatedCount += 1;
         placeholderRecord = null; // only use placeholder once
@@ -210,6 +219,7 @@ app.post("/api/submit-inbound", async (req, res) => {
         "SKU": sku,
         "Size": size,
         "Quantity": quantity,
+        "Type": typeToSave,
         "Status": "Verified",
         "Verified At": now,
         "Received At": parcelReceivedAt
