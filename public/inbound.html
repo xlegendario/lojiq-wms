@@ -297,6 +297,12 @@
       color: #184B32;
     }
 
+    .toast.warning {
+      background: #FDF0DD;
+      border-bottom: 5px solid #F59E0B;
+      color: #6B4A14;
+    }
+
     .toast.error {
       background: #FDE8E8;
       border-bottom: 5px solid #F04438;
@@ -324,6 +330,11 @@
 
     .toast.success .toast-icon {
       background: #16B364;
+      color: white;
+    }
+
+    .toast.warning .toast-icon {
+      background: #F59E0B;
       color: white;
     }
 
@@ -527,8 +538,14 @@
       const toast = document.createElement("div");
       toast.className = `toast ${type}`;
 
-      const resolvedTitle = title || (type === "success" ? "Success" : "Error");
-      const icon = type === "success" ? "✓" : "✕";
+      let defaultTitle = "Error";
+      if (type === "success") defaultTitle = "Success";
+      if (type === "warning") defaultTitle = "Warning";
+      
+      const resolvedTitle = title || defaultTitle;
+      let icon = "✕";
+      if (type === "success") icon = "✓";
+      if (type === "warning") icon = "!";
 
       toast.innerHTML = `
         <div class="toast-inner">
@@ -624,11 +641,11 @@
     async function handleScannedBarcode(gtin) {
       const cleanCode = gtin.trim();
       if (!cleanCode) return;
-
+    
       const existingItem = items.find(
         (item) => item.gtin === cleanCode
       );
-
+    
       if (existingItem) {
         existingItem.quantity += 1;
         renderTable();
@@ -636,33 +653,36 @@
         focusScanner();
         return;
       }
-
+    
       const newItem = {
         gtin: cleanCode,
         sku: "",
         size: "",
         quantity: 1
       };
-
+    
       items.push(newItem);
       renderTable();
-      showToast(`Scanned new GTIN: ${cleanCode}.`, "success", "Success");
-
+    
       try {
         const lookup = await lookupProduct(cleanCode);
-
+    
         if (lookup.found) {
           newItem.sku = lookup.sku || "";
           newItem.size = lookup.size || "";
           renderTable();
-          showToast(`Matched GTIN ${cleanCode} from Stock Levels.`, "success", "Success");
+          showToast(`GTIN ${cleanCode} matched successfully.`, "success", "Success");
         } else {
-          showToast(`GTIN ${cleanCode} was not found. Please fill SKU and Size manually.`, "error", "Error");
+          showToast(
+            `GTIN ${cleanCode} was not found. Please fill SKU and Size manually.`,
+            "warning",
+            "Warning"
+          );
         }
       } catch (error) {
         showToast(`Lookup error: ${error.message}`, "error", "Error");
       }
-
+    
       focusScanner();
     }
 
