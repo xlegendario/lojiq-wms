@@ -154,6 +154,48 @@ app.post("/api/submit-inbound", async (req, res) => {
   }
 });
 
+app.post("/api/receive-parcel", async (req, res) => {
+  try {
+    const trackingNumber = asText(req.body?.tracking_number);
+
+    if (!trackingNumber) {
+      return res.status(400).json({ error: "Missing tracking_number" });
+    }
+
+    const now = new Date().toISOString();
+
+    const records = await airtable(AIRTABLE_INCOMING_STOCK_TABLE)
+      .select({
+        filterByFormula: `TRIM({Tracking Number} & '') = '${escapeFormulaValue(trackingNumber)}'`,
+        maxRecords: 1
+      })
+      .firstPage();
+
+    if (records.length > 0) {
+      await airtable(AIRTABLE_INCOMING_STOCK_TABLE).update(records[0].id, {
+        "Status": "Received",
+        "Received At": now
+      });
+
+      return res.json({ message: "Parcel updated", exists: true });
+    }
+
+    await airtable(AIRTABLE_INCOMING_STOCK_TABLE).create({
+      "Tracking Number": trackingNumber,
+      "Status": "Received",
+      "Received At": now
+    });
+
+    res.json({ message: "Parcel created", exists: false });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      error: "Failed to process parcel",
+      details: error.message
+    });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`Lojiq WMS running on port ${PORT}`);
 });
