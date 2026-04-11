@@ -5,6 +5,31 @@
   <title>Lojiq WMS - Receive Parcels</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
+    .topbar {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+    }
+    
+    .home-button {
+      display: inline-block;
+      padding: 10px 18px;
+      border-radius: 10px;
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 14px;
+      color: #DCEBFF;
+      background: linear-gradient(135deg, #2F80ED, #66B3FF);
+      border: 1px solid rgba(102, 179, 255, 0.4);
+      box-shadow: 0 6px 18px rgba(47, 128, 237, 0.25);
+      transition: all 0.2s ease;
+    }
+    
+    .home-button:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 10px 22px rgba(47, 128, 237, 0.35);
+    }
+    
     :root {
       --bg: #07111F;
       --panel: #0E2238;
@@ -238,6 +263,10 @@
   </style>
 </head>
 <body>
+  <div class="topbar">
+    <a href="/" class="home-button">← Home</a>
+  </div>
+  
   <div class="wrap">
     <h1>Receive Parcels</h1>
     <p class="subtitle">Scan the parcel tracking barcode</p>
