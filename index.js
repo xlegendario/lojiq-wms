@@ -40,12 +40,12 @@ function escapeFormulaValue(value) {
   return asText(value).replace(/'/g, "\\'");
 }
 
-async function findStockLevelByProductCode(productCode) {
+async function findStockLevelByGTIN(gtin) {
   const safeCode = escapeFormulaValue(productCode);
 
   const records = await airtable(AIRTABLE_STOCK_LEVELS_TABLE)
     .select({
-      filterByFormula: `TRIM({Product Code} & '') = '${safeCode}'`,
+      filterByFormula: `TRIM({Product GTIN} & '') = '${safeCode}'`,
       maxRecords: 1
     })
     .firstPage();
@@ -59,13 +59,13 @@ app.get("/", (_req, res) => {
 
 app.post("/api/lookup-product", async (req, res) => {
   try {
-    const productCode = asText(req.body?.product_code);
+    const gtin = asText(req.body?.gtin);
 
     if (!productCode) {
       return res.status(400).json({ error: "Missing product_code" });
     }
 
-    const record = await findStockLevelByProductCode(productCode);
+    const record = await findStockLevelByGTIN(gtin);
 
     if (!record) {
       return res.status(200).json({
@@ -80,7 +80,7 @@ app.post("/api/lookup-product", async (req, res) => {
 
     return res.status(200).json({
       found: true,
-      product_code: productCode,
+      gtin,
       sku: asText(fields["SKU"]),
       size: asText(fields["Size"])
     });
@@ -107,7 +107,7 @@ app.post("/api/submit-inbound", async (req, res) => {
     }
 
     const recordsToCreate = items.map((item) => {
-      const productCode = asText(item.productCode);
+      const gtin = asText(item.gtin);
       const sku = asText(item.sku);
       const size = asText(item.size);
       const quantity = Number(item.quantity) || 0;
@@ -123,7 +123,7 @@ app.post("/api/submit-inbound", async (req, res) => {
       return {
         fields: {
           "Tracking Number": trackingNumber,
-          "Product Code": productCode,
+          "Product GTIN": gtin,
           "SKU": sku,
           "Size": size,
           "Quantity": quantity
