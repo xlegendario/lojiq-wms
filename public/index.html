@@ -2,13 +2,12 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Lojiq WMS</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
   <style>
     :root {
       --bg: #07111F;
-      --panel: #0E2238;
-      --border: #163252;
       --primary: #2F80ED;
       --primary-soft: #66B3FF;
       --text: #DCEBFF;
@@ -17,129 +16,82 @@
 
     * {
       box-sizing: border-box;
-      font-family: Arial, Helvetica, sans-serif;
     }
 
     body {
       margin: 0;
-      background:
-        radial-gradient(circle at top, rgba(47,128,237,0.18), transparent 30%),
-        linear-gradient(180deg, #050D18, var(--bg));
+      font-family: Arial, Helvetica, sans-serif;
       color: var(--text);
       min-height: 100vh;
       display: flex;
       align-items: center;
       justify-content: center;
-    }
-
-    .container {
-      width: 100%;
-      max-width: 1000px;
-      padding: 40px 20px;
+      background:
+        radial-gradient(circle at top, rgba(47,128,237,0.18), transparent 30%),
+        linear-gradient(180deg, #050D18 0%, var(--bg) 100%);
       text-align: center;
     }
 
-    .logo {
-      font-size: 48px;
-      font-weight: bold;
-      margin-bottom: 10px;
-      color: var(--primary-soft);
-      text-shadow: 0 0 20px rgba(47,128,237,0.4);
+    .container {
+      max-width: 900px;
+      width: 100%;
+      padding: 40px 20px;
     }
 
-    h1 {
-      margin: 0;
-      font-size: 36px;
+    .logo {
+      width: 420px;
+      max-width: 90%;
+      margin-bottom: 20px;
     }
 
     .subtitle {
-      margin-top: 10px;
+      font-size: 20px;
+      letter-spacing: 4px;
       color: var(--muted);
-      font-size: 16px;
-      margin-bottom: 40px;
+      margin-bottom: 50px;
+      font-weight: 600;
     }
 
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    .buttons {
+      display: flex;
+      justify-content: center;
       gap: 20px;
+      flex-wrap: wrap;
     }
 
-    .card {
-      background: linear-gradient(
-        180deg,
-        rgba(16,41,68,0.95),
-        rgba(14,34,56,0.95)
-      );
-      border: 1px solid var(--border);
-      border-radius: 16px;
-      padding: 30px 20px;
+    .button {
+      min-width: 240px;
+      padding: 18px 28px;
+      border-radius: 14px;
+      border: none;
+      font-size: 16px;
+      font-weight: 700;
       cursor: pointer;
-      transition: all 0.2s ease;
       text-decoration: none;
-      color: var(--text);
-      box-shadow: 0 10px 25px rgba(0,0,0,0.25);
+      color: white;
+      background: linear-gradient(135deg, var(--primary), var(--primary-soft));
+      box-shadow: 0 10px 25px rgba(47,128,237,0.25);
+      transition: all 0.2s ease;
     }
 
-    .card:hover {
-      transform: translateY(-4px);
-      border-color: var(--primary);
-      box-shadow: 0 15px 35px rgba(47,128,237,0.25);
-    }
-
-    .icon {
-      font-size: 40px;
-      margin-bottom: 15px;
-    }
-
-    .card-title {
-      font-size: 18px;
-      font-weight: bold;
-      margin-bottom: 5px;
-    }
-
-    .card-desc {
-      font-size: 14px;
-      color: var(--muted);
-    }
-
-    .footer {
-      margin-top: 40px;
-      font-size: 13px;
-      color: var(--muted);
+    .button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 14px 30px rgba(47,128,237,0.35);
     }
   </style>
 </head>
 <body>
   <div class="container">
-    <div class="logo">LOJIQ</div>
-    <h1>Lojiq WMS</h1>
-    <div class="subtitle">
-      Warehouse Management System
-    </div>
+    <!-- Logo -->
+    <img src="/images/lojiq-logo.png" alt="Lojiq Logo" class="logo" />
 
-    <div class="grid">
-      <!-- Receive Parcels -->
-      <a href="/receive.html" class="card">
-        <div class="icon">📥</div>
-        <div class="card-title">Receive Parcels</div>
-        <div class="card-desc">
-          Scan incoming packages and register them
-        </div>
-      </a>
-    
-      <!-- Verify Products -->
-      <a href="/inbound.html" class="card">
-        <div class="icon">📦</div>
-        <div class="card-title">Verify Products</div>
-        <div class="card-desc">
-          Scan and verify items inside parcels
-        </div>
-      </a>
-    </div>
+    <!-- Subtitle -->
+    <div class="subtitle">WAREHOUSE MANAGEMENT SYSTEM</div>
 
-    <div class="footer">
-      © 2025 Lojiq WMS — All rights reserved
+    <!-- Navigation Buttons -->
+    <div class="buttons">
+      <a href="/receive.html" class="button">Receive Parcels</a>
+      <a href="/inbound.html" class="button">Verify Products</a>
     </div>
   </div>
 </body>
