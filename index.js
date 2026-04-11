@@ -22,11 +22,11 @@ const {
 } = process.env;
 
 if (!AIRTABLE_TOKEN) {
-  throw new Error("Missing AIRTABLE_TOKEN in .env");
+  throw new Error("Missing AIRTABLE_TOKEN environment variable");
 }
 
 if (!AIRTABLE_BASE_ID) {
-  throw new Error("Missing AIRTABLE_BASE_ID in .env");
+  throw new Error("Missing AIRTABLE_BASE_ID environment variable");
 }
 
 const airtable = new Airtable({ apiKey: AIRTABLE_TOKEN }).base(AIRTABLE_BASE_ID);
