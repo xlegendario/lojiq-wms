@@ -98,6 +98,7 @@ app.post("/api/submit-inbound", async (req, res) => {
     const trackingNumber = asText(req.body?.tracking_number);
     const submittedType = asText(req.body?.type);
     const items = Array.isArray(req.body?.items) ? req.body.items : [];
+
     const typeToSave =
       submittedType === "Consignment" ||
       submittedType === "Forwarding" ||
@@ -119,8 +120,6 @@ app.post("/api/submit-inbound", async (req, res) => {
 
     const safeTracking = escapeFormulaValue(trackingNumber);
 
-    // Look for one placeholder parcel row:
-    // same Tracking Number, but empty Product GTIN
     const placeholderRecords = await airtable(AIRTABLE_INCOMING_STOCK_TABLE)
       .select({
         filterByFormula: `AND(
@@ -136,9 +135,6 @@ app.post("/api/submit-inbound", async (req, res) => {
 
     let placeholderRecord = placeholderRecords[0] || null;
 
-    // Always have a Received At value:
-    // - use original parcel Received At if available
-    // - otherwise use "now"
     const parcelReceivedAt = placeholderRecord?.fields?.["Received At"] || now;
 
     for (const item of items) {
@@ -157,7 +153,6 @@ app.post("/api/submit-inbound", async (req, res) => {
 
       const safeGtin = escapeFormulaValue(gtin);
 
-      // First check if an actual row already exists for this tracking + GTIN
       const existingRecords = await airtable(AIRTABLE_INCOMING_STOCK_TABLE)
         .select({
           filterByFormula: `AND(
@@ -192,26 +187,24 @@ app.post("/api/submit-inbound", async (req, res) => {
         continue;
       }
 
-      // If no actual GTIN row exists yet, but we still have a placeholder row,
-      // use that placeholder for the first product instead of creating a new row
-      await airtable(AIRTABLE_INCOMING_STOCK_TABLE).update(placeholderRecord.id, {
-        "Tracking Number": trackingNumber,
-        "Product GTIN": gtin,
-        "SKU": sku,
-        "Size": size,
-        "Quantity": quantity,
-        "Type": typeToSave,
-        "Status": "Verified",
-        "Verified At": now,
-        "Received At": receivedAtToUse
-      });
+      if (placeholderRecord) {
+        await airtable(AIRTABLE_INCOMING_STOCK_TABLE).update(placeholderRecord.id, {
+          "Tracking Number": trackingNumber,
+          "Product GTIN": gtin,
+          "SKU": sku,
+          "Size": size,
+          "Quantity": quantity,
+          "Type": typeToSave,
+          "Status": "Verified",
+          "Verified At": now,
+          "Received At": receivedAtToUse
+        });
 
         updatedCount += 1;
-        placeholderRecord = null; // only use placeholder once
+        placeholderRecord = null;
         continue;
       }
 
-      // Otherwise create a normal new row
       await airtable(AIRTABLE_INCOMING_STOCK_TABLE).create({
         "Tracking Number": trackingNumber,
         "Product GTIN": gtin,
