@@ -451,11 +451,12 @@
           autocomplete="off"
         />
         
-        <select id="typeSelect" class="input">
-          <option value="Unknown">Unknown</option>
+        <select id="typeSelect" class="input" required>
+          <option value="" selected disabled>Select Type</option>
           <option value="Consignment">Consignment</option>
           <option value="Forwarding">Forwarding</option>
           <option value="Regular">Regular</option>
+          <option value="Unknown">Unknown</option>
         </select>
         
         <button class="button secondary" id="resetBtn">Reset</button>
@@ -730,14 +731,20 @@
 
     function startParcelFromTracking() {
       const value = trackingInput.value.trim();
+      const selectedType = typeSelect.value;
     
-      if (!value) {
+      if (!value) return;
+    
+      if (!selectedType) {
+        showToast("Please select a parcel type.", "warning");
+        typeSelect.focus();
         return;
       }
     
       trackingNumber = value;
-      parcelType = typeSelect.value || "Unknown";
+      parcelType = selectedType;
       parcelStarted = true;
+    
       updateStatusPanel();
       focusScanner();
     }
