@@ -124,14 +124,10 @@
 
     .card h2 {
       margin: 0 0 16px;
-      font-size: 18px;
-    }
-
-    .label {
-      display: block;
-      margin-bottom: 8px;
-      color: var(--muted);
-      font-size: 13px;
+      font-size: 24px;
+      font-weight: 800;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
     }
 
     .input,
@@ -179,33 +175,32 @@
 
     .status-box {
       margin-top: 18px;
-      padding: 14px;
+      padding: 16px;
       border-radius: 14px;
       background: rgba(7,17,31,0.55);
       border: 1px solid var(--border);
+    }
+
+    .status-item {
+      margin-bottom: 16px;
+    }
+
+    .status-item:last-child {
+      margin-bottom: 0;
+    }
+
+    .status-label {
       font-size: 14px;
-      line-height: 1.8;
+      font-weight: 800;
+      color: var(--text);
+      margin-bottom: 6px;
     }
 
-    .pill {
-      display: inline-block;
-      padding: 6px 10px;
-      border-radius: 999px;
-      font-size: 13px;
-      font-weight: 700;
-      background: rgba(47,128,237,0.14);
-      border: 1px solid rgba(47,128,237,0.3);
-      color: var(--primary-soft);
-    }
-
-    .scan-note {
-      margin-top: 14px;
-      padding: 12px 14px;
-      border-radius: 12px;
-      border: 1px dashed rgba(102,179,255,0.35);
-      color: var(--primary-soft);
-      font-size: 13px;
-      background: rgba(47,128,237,0.06);
+    .status-value {
+      font-size: 14px;
+      font-weight: 400;
+      color: var(--text);
+      word-break: break-word;
     }
 
     .table-wrap {
@@ -218,7 +213,7 @@
     table {
       width: 100%;
       border-collapse: collapse;
-      min-width: 700px;
+      min-width: 820px;
     }
 
     th, td {
@@ -231,7 +226,7 @@
 
     th {
       color: var(--muted);
-      font-weight: 600;
+      font-weight: 700;
       background: rgba(7,17,31,0.5);
     }
 
@@ -259,7 +254,7 @@
 
     .actions .button {
       width: auto;
-      min-width: 190px;
+      min-width: 170px;
     }
 
     .hidden-scan {
@@ -267,6 +262,32 @@
       left: -9999px;
       opacity: 0;
       pointer-events: none;
+    }
+
+    .delete-btn {
+      width: 40px;
+      height: 40px;
+      border-radius: 10px;
+      border: 1px solid rgba(240, 68, 56, 0.35);
+      background: rgba(240, 68, 56, 0.10);
+      color: #ff9b95;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: 0.2s ease;
+    }
+
+    .delete-btn:hover {
+      background: rgba(240, 68, 56, 0.18);
+      border-color: rgba(240, 68, 56, 0.6);
+      transform: translateY(-1px);
+    }
+
+    .delete-icon {
+      width: 18px;
+      height: 18px;
+      display: block;
     }
 
     .toast-stack {
@@ -297,16 +318,16 @@
       color: #184B32;
     }
 
-    .toast.warning {
-      background: #FDF0DD;
-      border-bottom: 5px solid #F59E0B;
-      color: #6B4A14;
-    }
-
     .toast.error {
       background: #FDE8E8;
       border-bottom: 5px solid #F04438;
       color: #5F2120;
+    }
+
+    .toast.warning {
+      background: #FDF0DD;
+      border-bottom: 5px solid #F59E0B;
+      color: #6B4A14;
     }
 
     .toast-inner {
@@ -333,13 +354,13 @@
       color: white;
     }
 
-    .toast.warning .toast-icon {
-      background: #F59E0B;
+    .toast.error .toast-icon {
+      background: #F04438;
       color: white;
     }
 
-    .toast.error .toast-icon {
-      background: #F04438;
+    .toast.warning .toast-icon {
+      background: #F59E0B;
       color: white;
     }
 
@@ -440,34 +461,43 @@
 
     <div class="grid">
       <div class="card">
-        <h2>Verify Parcel</h2>
+        <h2>VERIFY PARCEL</h2>
 
-        <label class="label" for="trackingInput">Tracking Number</label>
         <input
           id="trackingInput"
           class="input"
           type="text"
-          placeholder="Scan shipping label barcode"
+          placeholder="Scan parcel tracking number"
           autocomplete="off"
         />
 
-        <button class="button" id="startBtn">Start Parcel</button>
         <button class="button secondary" id="resetBtn">Reset</button>
 
         <div class="status-box">
-          <div>Status: <strong id="statusText">Waiting for tracking scan</strong></div>
-          <div>Tracking: <strong id="trackingDisplay">—</strong></div>
-          <div>Unique GTINs: <span class="pill" id="uniqueCount">0</span></div>
-          <div>Total items: <span class="pill" id="totalCount">0</span></div>
-        </div>
+          <div class="status-item">
+            <div class="status-label">Status:</div>
+            <div class="status-value" id="statusText">Waiting for tracking scan</div>
+          </div>
 
-        <div class="scan-note">
-          After the parcel is started, scan all product GTINs one after another.
+          <div class="status-item">
+            <div class="status-label">Tracking:</div>
+            <div class="status-value" id="trackingDisplay">—</div>
+          </div>
+
+          <div class="status-item">
+            <div class="status-label">Unique GTIN's:</div>
+            <div class="status-value" id="uniqueCount">0</div>
+          </div>
+
+          <div class="status-item">
+            <div class="status-label">Total Items:</div>
+            <div class="status-value" id="totalCount">0</div>
+          </div>
         </div>
       </div>
 
       <div class="card">
-        <h2>Parcel Summary</h2>
+        <h2>SUMMARY</h2>
 
         <div class="table-wrap">
           <table class="table">
@@ -477,19 +507,20 @@
                 <th>SKU</th>
                 <th>Size</th>
                 <th>Quantity</th>
+                <th></th>
               </tr>
             </thead>
             <tbody id="itemsTableBody">
               <tr>
-                <td colspan="4" class="empty">No items scanned yet</td>
+                <td colspan="5" class="empty">No items scanned yet</td>
               </tr>
             </tbody>
           </table>
         </div>
 
         <div class="actions">
-          <button class="button secondary" id="focusScannerBtn">Refocus Scanner</button>
-          <button class="button" id="submitBtn">Submit Parcel</button>
+          <button class="button secondary" id="focusScannerBtn">Refocus</button>
+          <button class="button" id="submitBtn">Submit</button>
         </div>
       </div>
     </div>
@@ -508,7 +539,6 @@
 
   <script>
     const trackingInput = document.getElementById("trackingInput");
-    const startBtn = document.getElementById("startBtn");
     const resetBtn = document.getElementById("resetBtn");
     const submitBtn = document.getElementById("submitBtn");
     const focusScannerBtn = document.getElementById("focusScannerBtn");
@@ -541,8 +571,9 @@
       let defaultTitle = "Error";
       if (type === "success") defaultTitle = "Success";
       if (type === "warning") defaultTitle = "Warning";
-      
+
       const resolvedTitle = title || defaultTitle;
+
       let icon = "✕";
       if (type === "success") icon = "✓";
       if (type === "warning") icon = "!";
@@ -577,15 +608,26 @@
       scanInput.focus();
     }
 
+    function updateStatusPanel() {
+      statusText.textContent = parcelStarted
+        ? "Parcel active — ready to scan item barcodes"
+        : "Waiting for tracking scan";
+
+      trackingDisplay.textContent = trackingNumber || "—";
+      uniqueCount.textContent = String(items.length);
+      totalCount.textContent = String(
+        items.reduce((sum, item) => sum + item.quantity, 0)
+      );
+    }
+
     function renderTable() {
       if (items.length === 0) {
         itemsTableBody.innerHTML = `
           <tr>
-            <td colspan="4" class="empty">No items scanned yet</td>
+            <td colspan="5" class="empty">No items scanned yet</td>
           </tr>
         `;
-        uniqueCount.textContent = "0";
-        totalCount.textContent = "0";
+        updateStatusPanel();
         return;
       }
 
@@ -609,13 +651,21 @@
             />
           </td>
           <td class="qty">${item.quantity}</td>
+          <td>
+            <button class="delete-btn" type="button" data-delete-index="${index}" aria-label="Delete row">
+              <svg class="delete-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+                <path d="M4 7H20" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+                <path d="M9 7V5.8C9 5.35817 9.35817 5 9.8 5H14.2C14.6418 5 15 5.35817 15 5.8V7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+                <path d="M18 7L17.2 18.2C17.1418 19.0146 16.4639 19.645 15.6472 19.645H8.35284C7.53607 19.645 6.85824 19.0146 6.80004 18.2L6 7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+                <path d="M10 11V16" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+                <path d="M14 11V16" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+              </svg>
+            </button>
+          </td>
         </tr>
       `).join("");
 
-      uniqueCount.textContent = String(items.length);
-      totalCount.textContent = String(
-        items.reduce((sum, item) => sum + item.quantity, 0)
-      );
+      updateStatusPanel();
     }
 
     async function lookupProduct(gtin) {
@@ -624,9 +674,7 @@
         headers: {
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({
-          gtin
-        })
+        body: JSON.stringify({ gtin })
       });
 
       const data = await response.json();
@@ -641,11 +689,11 @@
     async function handleScannedBarcode(gtin) {
       const cleanCode = gtin.trim();
       if (!cleanCode) return;
-    
+
       const existingItem = items.find(
         (item) => item.gtin === cleanCode
       );
-    
+
       if (existingItem) {
         existingItem.quantity += 1;
         renderTable();
@@ -653,20 +701,20 @@
         focusScanner();
         return;
       }
-    
+
       const newItem = {
         gtin: cleanCode,
         sku: "",
         size: "",
         quantity: 1
       };
-    
+
       items.push(newItem);
       renderTable();
-    
+
       try {
         const lookup = await lookupProduct(cleanCode);
-    
+
         if (lookup.found) {
           newItem.sku = lookup.sku || "";
           newItem.size = lookup.size || "";
@@ -682,25 +730,20 @@
       } catch (error) {
         showToast(`Lookup error: ${error.message}`, "error", "Error");
       }
-    
+
       focusScanner();
     }
 
-    function startParcel() {
+    function startParcelFromTracking() {
       const value = trackingInput.value.trim();
 
       if (!value) {
-        alert("Please scan the tracking number first.");
-        trackingInput.focus();
         return;
       }
 
       trackingNumber = value;
       parcelStarted = true;
-
-      statusText.textContent = "Parcel active — ready to scan item barcodes";
-      trackingDisplay.textContent = trackingNumber;
-
+      updateStatusPanel();
       focusScanner();
     }
 
@@ -710,31 +753,29 @@
       items = [];
       trackingInput.value = "";
       scanInput.value = "";
-      statusText.textContent = "Waiting for tracking scan";
-      trackingDisplay.textContent = "—";
       renderTable();
       trackingInput.focus();
     }
 
     async function submitParcel() {
       if (!parcelStarted) {
-        alert("Start the parcel first.");
+        showToast("Scan a parcel tracking number first.", "warning", "Warning");
         return;
       }
 
       if (!trackingNumber) {
-        alert("Missing tracking number.");
+        showToast("Missing tracking number.", "error", "Error");
         return;
       }
 
       if (!items.length) {
-        alert("No items scanned.");
+        showToast("No items scanned.", "warning", "Warning");
         return;
       }
 
       for (const item of items) {
         if (!item.gtin.trim()) {
-          alert("One item is missing Product GTIN.");
+          showToast("One item is missing Product GTIN.", "error", "Error");
           return;
         }
       }
@@ -771,19 +812,16 @@
         items = [];
         trackingInput.value = "";
         scanInput.value = "";
-        statusText.textContent = "Waiting for tracking scan";
-        trackingDisplay.textContent = "—";
         renderTable();
         trackingInput.focus();
       } catch (error) {
         showToast(`Submit error: ${error.message}`, "error", "Error");
       } finally {
         submitBtn.disabled = false;
-        submitBtn.textContent = "Submit Parcel";
+        submitBtn.textContent = "Submit";
       }
     }
 
-    startBtn.addEventListener("click", startParcel);
     resetBtn.addEventListener("click", resetParcel);
     focusScannerBtn.addEventListener("click", focusScanner);
     submitBtn.addEventListener("click", submitParcel);
@@ -791,7 +829,7 @@
     trackingInput.addEventListener("keydown", (event) => {
       if (event.key === "Enter") {
         event.preventDefault();
-        startParcel();
+        startParcelFromTracking();
       }
     });
 
@@ -800,7 +838,8 @@
       event.preventDefault();
 
       if (!parcelStarted) {
-        showToast("Start a parcel first before scanning items.", "error", "Error");
+        showToast("Scan a parcel tracking number first.", "warning", "Warning");
+        trackingInput.focus();
         return;
       }
 
@@ -825,12 +864,29 @@
       items[index][field] = target.value;
     });
 
+    itemsTableBody.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-delete-index]");
+      if (!button) return;
+
+      const index = Number(button.dataset.deleteIndex);
+      if (!Number.isInteger(index) || !items[index]) return;
+
+      const removed = items[index];
+      items.splice(index, 1);
+      renderTable();
+      showToast(`Removed GTIN ${removed.gtin}.`, "success", "Success");
+      focusScanner();
+    });
+
     document.addEventListener("click", (event) => {
       const target = event.target;
       const clickedInsideEditableField =
         target === trackingInput ||
         target === scanInput ||
-        (target instanceof HTMLInputElement && target.dataset.field);
+        (target instanceof HTMLInputElement && target.dataset.field) ||
+        target.closest?.("[data-delete-index]") ||
+        target.closest?.(".toast") ||
+        target.closest?.(".home-button");
 
       if (!clickedInsideEditableField && parcelStarted) {
         focusScanner();
