@@ -315,7 +315,7 @@
           <table class="table">
             <thead>
               <tr>
-                <th>Product Code</th>
+                <th>Product GTIN</th>
                 <th>SKU</th>
                 <th>Size</th>
                 <th>Quantity</th>
@@ -403,7 +403,7 @@
   
       itemsTableBody.innerHTML = items.map((item, index) => `
         <tr>
-          <td>${escapeHtml(item.productCode)}</td>
+          <td>${escapeHtml(item.gtin)}</td>
           <td>
             <input
               value="${escapeHtml(item.sku)}"
@@ -437,7 +437,7 @@
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          product_code: productCode
+          gtin: productCode
         })
       });
   
@@ -457,7 +457,7 @@
       clearMessage();
   
       const existingItem = items.find(
-        (item) => item.productCode === cleanCode
+        (item) => item.gtin === cleanCode
       );
   
       if (existingItem) {
@@ -469,7 +469,7 @@
       }
   
       const newItem = {
-        productCode: cleanCode,
+        gtin: cleanCode,
         sku: "",
         size: "",
         quantity: 1
@@ -548,8 +548,8 @@
       }
   
       for (const item of items) {
-        if (!item.productCode.trim()) {
-          alert("One item is missing Product Code.");
+        if (!item.gtin.trim()) {
+          alert("One item is missing Product GTIN.");
           return;
         }
       }
