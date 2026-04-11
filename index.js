@@ -54,7 +54,7 @@ async function findStockLevelByProductCode(productCode) {
 }
 
 app.get("/", (_req, res) => {
-  res.redirect("/inbound.html");
+  res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
 app.post("/api/lookup-product", async (req, res) => {
