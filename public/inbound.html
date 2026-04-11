@@ -539,6 +539,7 @@
 
     const statusText = document.getElementById("statusText");
     const trackingDisplay = document.getElementById("trackingDisplay");
+    const typeDisplay = document.getElementById("typeDisplay");
     const uniqueCount = document.getElementById("uniqueCount");
     const totalCount = document.getElementById("totalCount");
     const itemsTableBody = document.getElementById("itemsTableBody");
@@ -606,12 +607,11 @@
       statusText.textContent = parcelStarted
         ? "Parcel active — ready to scan item barcodes"
         : "Waiting for tracking scan";
-
+    
       trackingDisplay.textContent = trackingNumber || "—";
-      uniqueCount.textContent = String(items.length);
-      totalCount.textContent = String(
-        items.reduce((sum, item) => sum + item.quantity, 0)
-      );
+      typeDisplay.textContent = parcelType || "Unknown";
+      uniqueCount.textContent = items.length;
+      totalCount.textContent = items.reduce((sum, item) => sum + item.quantity, 0);
     }
 
     function renderTable() {
