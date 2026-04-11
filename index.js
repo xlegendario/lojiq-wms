@@ -129,6 +129,11 @@ app.post("/api/submit-inbound", async (req, res) => {
 
     let placeholderRecord = placeholderRecords[0] || null;
 
+    // Always have a Received At value:
+    // - use original parcel Received At if available
+    // - otherwise use "now"
+    const parcelReceivedAt = placeholderRecord?.fields?.["Received At"] || now;
+
     for (const item of items) {
       const gtin = asText(item.gtin);
       const sku = asText(item.sku);
@@ -156,15 +161,23 @@ app.post("/api/submit-inbound", async (req, res) => {
         })
         .firstPage();
 
-      if (existingRecords.length > 0) {
-        await airtable(AIRTABLE_INCOMING_STOCK_TABLE).update(existingRecords[0].id, {
+      const existingRecord = existingRecords[0] || null;
+
+      const receivedAtToUse =
+        placeholderRecord?.fields?.["Received At"] ||
+        existingRecord?.fields?.["Received At"] ||
+        now;
+
+      if (existingRecord) {
+        await airtable(AIRTABLE_INCOMING_STOCK_TABLE).update(existingRecord.id, {
           "Tracking Number": trackingNumber,
           "Product GTIN": gtin,
           "SKU": sku,
           "Size": size,
           "Quantity": quantity,
           "Status": "Verified",
-          "Verified At": now
+          "Verified At": now,
+          "Received At": receivedAtToUse
         });
 
         updatedCount += 1;
@@ -181,7 +194,8 @@ app.post("/api/submit-inbound", async (req, res) => {
           "Size": size,
           "Quantity": quantity,
           "Status": "Verified",
-          "Verified At": now
+          "Verified At": now,
+          "Received At": receivedAtToUse
         });
 
         updatedCount += 1;
@@ -197,7 +211,8 @@ app.post("/api/submit-inbound", async (req, res) => {
         "Size": size,
         "Quantity": quantity,
         "Status": "Verified",
-        "Verified At": now
+        "Verified At": now,
+        "Received At": parcelReceivedAt
       });
 
       createdCount += 1;
