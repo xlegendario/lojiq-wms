@@ -113,7 +113,8 @@
     }
 
     .input,
-    .table input {
+    .table input,
+    select.input {
       width: 100%;
       border-radius: 12px;
       border: 1px solid var(--border);
@@ -125,7 +126,8 @@
     }
 
     .input:focus,
-    .table input:focus {
+    .table input:focus,
+    select.input:focus {
       border-color: var(--primary);
       box-shadow: 0 0 0 3px rgba(47,128,237,0.15);
     }
@@ -448,7 +450,14 @@
           placeholder="Scan parcel tracking number"
           autocomplete="off"
         />
-
+        
+        <select id="typeSelect" class="input">
+          <option value="Unknown">Unknown</option>
+          <option value="Consignment">Consignment</option>
+          <option value="Forwarding">Forwarding</option>
+          <option value="Regular">Regular</option>
+        </select>
+        
         <button class="button secondary" id="resetBtn">Reset</button>
 
         <div class="status-box">
@@ -517,6 +526,7 @@
 
   <script>
     const trackingInput = document.getElementById("trackingInput");
+    const typeSelect = document.getElementById("typeSelect");
     const resetBtn = document.getElementById("resetBtn");
     const submitBtn = document.getElementById("submitBtn");
     const focusScannerBtn = document.getElementById("focusScannerBtn");
@@ -531,6 +541,7 @@
 
     let parcelStarted = false;
     let trackingNumber = "";
+    let parcelType = "Unknown";
     let items = [];
 
     function escapeHtml(value) {
@@ -714,12 +725,13 @@
 
     function startParcelFromTracking() {
       const value = trackingInput.value.trim();
-
+    
       if (!value) {
         return;
       }
-
+    
       trackingNumber = value;
+      parcelType = typeSelect.value || "Unknown";
       parcelStarted = true;
       updateStatusPanel();
       focusScanner();
@@ -728,8 +740,10 @@
     function resetParcel() {
       parcelStarted = false;
       trackingNumber = "";
+      parcelType = "Unknown";
       items = [];
       trackingInput.value = "";
+      typeSelect.value = "Unknown";
       scanInput.value = "";
       renderTable();
       trackingInput.focus();
@@ -769,6 +783,7 @@
           },
           body: JSON.stringify({
             tracking_number: trackingNumber,
+            type: parcelType,
             items
           })
         });
