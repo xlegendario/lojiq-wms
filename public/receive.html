@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Lojiq WMS - Receive Parcels</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body {
+      background: #07111F;
+      color: #DCEBFF;
+      font-family: Arial, sans-serif;
+      text-align: center;
+      padding: 40px;
+    }
+    input {
+      padding: 15px;
+      font-size: 18px;
+      width: 320px;
+      border-radius: 8px;
+      border: none;
+      margin-top: 20px;
+    }
+    .message {
+      margin-top: 20px;
+      font-size: 18px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Receive Parcels</h1>
+  <p>Scan the parcel tracking barcode</p>
+
+  <input id="scanInput" type="text" autofocus placeholder="Scan Tracking Number" />
+  <div class="message" id="message"></div>
+
+  <script>
+    const scanInput = document.getElementById("scanInput");
+    const message = document.getElementById("message");
+
+    async function processScan(trackingNumber) {
+      try {
+        const res = await fetch("/api/receive-parcel", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tracking_number: trackingNumber })
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) throw new Error(data.error);
+
+        message.innerText = `✔ Parcel ${trackingNumber} marked as Received`;
+      } catch (err) {
+        message.innerText = `❌ Error: ${err.message}`;
+      }
+    }
+
+    scanInput.addEventListener("keydown", async (e) => {
+      if (e.key === "Enter") {
+        const value = scanInput.value.trim();
+        scanInput.value = "";
+        if (value) await processScan(value);
+      }
+    });
+  </script>
+</body>
+</html>
