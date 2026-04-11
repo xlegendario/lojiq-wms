@@ -41,7 +41,7 @@ function escapeFormulaValue(value) {
 }
 
 async function findStockLevelByGTIN(gtin) {
-  const safeCode = escapeFormulaValue(productCode);
+  const safeCode = escapeFormulaValue(gtin);
 
   const records = await airtable(AIRTABLE_STOCK_LEVELS_TABLE)
     .select({
@@ -61,8 +61,8 @@ app.post("/api/lookup-product", async (req, res) => {
   try {
     const gtin = asText(req.body?.gtin);
 
-    if (!productCode) {
-      return res.status(400).json({ error: "Missing product_code" });
+    if (!gtin) {
+      return res.status(400).json({ error: "Missing gtin" });
     }
 
     const record = await findStockLevelByGTIN(gtin);
@@ -70,7 +70,7 @@ app.post("/api/lookup-product", async (req, res) => {
     if (!record) {
       return res.status(200).json({
         found: false,
-        product_code: productCode,
+        gtin,
         sku: "",
         size: ""
       });
@@ -112,12 +112,12 @@ app.post("/api/submit-inbound", async (req, res) => {
       const size = asText(item.size);
       const quantity = Number(item.quantity) || 0;
 
-      if (!productCode) {
-        throw new Error("One or more items are missing Product Code");
+      if (!gtin) {
+        throw new Error("One or more items are missing Product GTIN");
       }
 
       if (quantity <= 0) {
-        throw new Error(`Invalid quantity for product code ${productCode}`);
+        throw new Error(`Invalid quantity for GTIN ${gtin}`);
       }
 
       return {
