@@ -1,0 +1,15 @@
+{
+  "name": "lojiq-wms",
+  "version": "1.0.0",
+  "description": "Lojiq WMS - inbound stock scanning app",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "airtable": "^0.12.2",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2"
+  }
+}
