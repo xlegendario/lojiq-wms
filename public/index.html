@@ -12,6 +12,8 @@
       --primary-soft: #66B3FF;
       --text: #DCEBFF;
       --muted: #8FAECC;
+      --panel: #0E2238;
+      --border: #163252;
     }
 
     * {
@@ -33,11 +35,12 @@
     }
 
     .container {
-      max-width: 900px;
+      max-width: 1000px;
       width: 100%;
       padding: 40px 20px;
     }
 
+    /* Logo Section */
     .logo {
       width: 420px;
       max-width: 90%;
@@ -52,46 +55,79 @@
       font-weight: 600;
     }
 
-    .buttons {
+    /* Grid Cards */
+    .grid {
       display: flex;
       justify-content: center;
-      gap: 20px;
+      gap: 24px;
       flex-wrap: wrap;
     }
 
-    .button {
-      min-width: 240px;
-      padding: 18px 28px;
-      border-radius: 14px;
-      border: none;
-      font-size: 16px;
-      font-weight: 700;
-      cursor: pointer;
+    .card {
+      width: 260px;
+      padding: 30px 20px;
+      border-radius: 18px;
       text-decoration: none;
-      color: white;
-      background: linear-gradient(135deg, var(--primary), var(--primary-soft));
-      box-shadow: 0 10px 25px rgba(47,128,237,0.25);
+      color: var(--text);
+      background: linear-gradient(180deg, rgba(16,41,68,0.95), rgba(14,34,56,0.95));
+      border: 1px solid var(--border);
+      box-shadow: 0 10px 30px rgba(0,0,0,0.28);
       transition: all 0.2s ease;
     }
 
-    .button:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 14px 30px rgba(47,128,237,0.35);
+    .card:hover {
+      transform: translateY(-5px);
+      box-shadow: 0 14px 35px rgba(47,128,237,0.25);
+      border-color: var(--primary);
+    }
+
+    .icon {
+      font-size: 42px;
+      margin-bottom: 12px;
+    }
+
+    .card-title {
+      font-size: 20px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    .card-desc {
+      font-size: 14px;
+      color: var(--muted);
     }
   </style>
 </head>
 <body>
   <div class="container">
+    
     <!-- Logo -->
     <img src="/images/lojiq-logo.png" alt="Lojiq Logo" class="logo" />
 
     <!-- Subtitle -->
     <div class="subtitle">WAREHOUSE MANAGEMENT SYSTEM</div>
 
-    <!-- Navigation Buttons -->
-    <div class="buttons">
-      <a href="/receive.html" class="button">Receive Parcels</a>
-      <a href="/inbound.html" class="button">Verify Products</a>
+    <!-- Navigation Cards -->
+    <div class="grid">
+      
+      <!-- Receive Parcels -->
+      <a href="/receive.html" class="card">
+        <div class="icon">📥</div>
+        <div class="card-title">Receive Parcels</div>
+        <div class="card-desc">
+          Scan incoming packages and register them
+        </div>
+      </a>
+
+      <!-- Verify Products -->
+      <a href="/inbound.html" class="card">
+        <div class="icon">📦</div>
+        <div class="card-title">Verify Products</div>
+        <div class="card-desc">
+          Scan and verify items inside parcels
+        </div>
+      </a>
+
     </div>
   </div>
 </body>
