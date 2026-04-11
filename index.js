@@ -126,7 +126,9 @@ app.post("/api/submit-inbound", async (req, res) => {
           "Product GTIN": gtin,
           "SKU": sku,
           "Size": size,
-          "Quantity": quantity
+          "Quantity": quantity,
+          "Status": "Verified",
+          "Verified At": new Date().toISOString()
         }
       };
     });
