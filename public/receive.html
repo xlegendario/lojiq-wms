@@ -7,27 +7,36 @@
   <style>
     .topbar {
       position: absolute;
-      top: 20px;
-      left: 20px;
+      top: 24px;
+      left: 24px;
+      z-index: 1000;
     }
     
     .home-button {
-      display: inline-block;
-      padding: 10px 18px;
-      border-radius: 10px;
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 14px 24px;
+      border-radius: 14px;
       text-decoration: none;
-      font-weight: 600;
-      font-size: 14px;
+      font-weight: 700;
+      font-size: 18px;
+      letter-spacing: 0.3px;
       color: #DCEBFF;
       background: linear-gradient(135deg, #2F80ED, #66B3FF);
       border: 1px solid rgba(102, 179, 255, 0.4);
-      box-shadow: 0 6px 18px rgba(47, 128, 237, 0.25);
+      box-shadow: 0 8px 22px rgba(47, 128, 237, 0.3);
       transition: all 0.2s ease;
     }
     
     .home-button:hover {
-      transform: translateY(-1px);
-      box-shadow: 0 10px 22px rgba(47, 128, 237, 0.35);
+      transform: translateY(-2px);
+      box-shadow: 0 12px 26px rgba(47, 128, 237, 0.4);
+    }
+    
+    .home-button:active {
+      transform: translateY(0);
+      box-shadow: 0 6px 14px rgba(47, 128, 237, 0.25);
     }
     
     :root {
