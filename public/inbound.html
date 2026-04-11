@@ -75,43 +75,25 @@
       margin: 0 auto;
       padding: 110px 20px 60px;
     }
-
-    .topbar-main {
-      display: flex;
-      align-items: center;
-      gap: 16px;
-      margin-bottom: 28px;
+    
+    .page-header {
+      text-align: center;
+      margin-bottom: 34px;
     }
-
-    .logo {
-      width: 56px;
-      height: 56px;
-      border-radius: 14px;
-      background: linear-gradient(135deg, rgba(47,128,237,0.25), rgba(102,179,255,0.08));
-      border: 1px solid rgba(102,179,255,0.2);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      box-shadow: 0 0 30px rgba(47,128,237,0.15);
-      font-size: 24px;
-      font-weight: bold;
-    }
-
-    h1 {
+    
+    .page-title {
       margin: 0;
-      font-size: 28px;
-    }
-
-    .subtitle {
-      margin-top: 4px;
-      color: var(--muted);
-      font-size: 14px;
+      font-size: 56px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      color: var(--text);
     }
 
     .grid {
       display: grid;
       grid-template-columns: 360px 1fr;
-      gap: 20px;
+      gap: 24px;
+      align-items: start;
     }
 
     .card {
@@ -451,12 +433,8 @@
   </div>
 
   <div class="wrap">
-    <div class="topbar-main">
-      <div class="logo">L</div>
-      <div>
-        <h1>Lojiq WMS</h1>
-        <div class="subtitle">Verify products inside parcels</div>
-      </div>
+    <div class="page-header">
+      <h1 class="page-title">Verify Products</h1>
     </div>
 
     <div class="grid">
