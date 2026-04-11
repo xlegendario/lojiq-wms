@@ -14,8 +14,6 @@
       --primary-soft: #66B3FF;
       --text: #DCEBFF;
       --muted: #8FAECC;
-      --success: #1FA971;
-      --danger: #E35D6A;
     }
 
     * {
@@ -32,13 +30,53 @@
       min-height: 100vh;
     }
 
+    .topbar {
+      position: absolute;
+      top: 28px;
+      left: 28px;
+      z-index: 1000;
+    }
+
+    .home-button {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      padding: 16px 28px;
+      border-radius: 14px;
+      text-decoration: none;
+      font-weight: 700;
+      font-size: 18px;
+      letter-spacing: 0.3px;
+      color: #DCEBFF;
+      background: linear-gradient(135deg, #2F80ED, #66B3FF);
+      border: 1px solid rgba(102, 179, 255, 0.35);
+      box-shadow: 0 10px 24px rgba(47, 128, 237, 0.25);
+      transition: all 0.2s ease;
+    }
+
+    .home-button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 14px 30px rgba(47, 128, 237, 0.35);
+    }
+
+    .home-button:active {
+      transform: translateY(0);
+      box-shadow: 0 6px 16px rgba(47, 128, 237, 0.2);
+    }
+
+    .home-icon {
+      width: 22px;
+      height: 22px;
+      flex: 0 0 22px;
+    }
+
     .wrap {
       max-width: 1150px;
       margin: 0 auto;
-      padding: 32px 20px 60px;
+      padding: 110px 20px 60px;
     }
 
-    .topbar {
+    .topbar-main {
       display: flex;
       align-items: center;
       gap: 16px;
@@ -170,28 +208,6 @@
       background: rgba(47,128,237,0.06);
     }
 
-    .message {
-      margin-top: 14px;
-      padding: 12px 14px;
-      border-radius: 12px;
-      display: none;
-      font-size: 14px;
-    }
-
-    .message.success {
-      display: block;
-      background: rgba(31,169,113,0.12);
-      border: 1px solid rgba(31,169,113,0.35);
-      color: #9BE3C4;
-    }
-
-    .message.error {
-      display: block;
-      background: rgba(227,93,106,0.12);
-      border: 1px solid rgba(227,93,106,0.35);
-      color: #FFB3BC;
-    }
-
     .table-wrap {
       overflow-x: auto;
       border-radius: 16px;
@@ -243,7 +259,7 @@
 
     .actions .button {
       width: auto;
-      min-width: 170px;
+      min-width: 190px;
     }
 
     .hidden-scan {
@@ -251,6 +267,130 @@
       left: -9999px;
       opacity: 0;
       pointer-events: none;
+    }
+
+    .toast-stack {
+      position: fixed;
+      left: 24px;
+      right: 24px;
+      bottom: 24px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+      pointer-events: none;
+      z-index: 9999;
+    }
+
+    .toast {
+      width: min(720px, 100%);
+      border-radius: 10px;
+      box-shadow: 0 14px 30px rgba(0,0,0,0.28);
+      overflow: hidden;
+      pointer-events: auto;
+      animation: toastIn 0.22s ease-out;
+    }
+
+    .toast.success {
+      background: #DDF5E8;
+      border-bottom: 5px solid #16B364;
+      color: #184B32;
+    }
+
+    .toast.error {
+      background: #FDE8E8;
+      border-bottom: 5px solid #F04438;
+      color: #5F2120;
+    }
+
+    .toast-inner {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      padding: 16px 18px 14px;
+    }
+
+    .toast-icon {
+      flex: 0 0 34px;
+      width: 34px;
+      height: 34px;
+      border-radius: 999px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      font-weight: 700;
+    }
+
+    .toast.success .toast-icon {
+      background: #16B364;
+      color: white;
+    }
+
+    .toast.error .toast-icon {
+      background: #F04438;
+      color: white;
+    }
+
+    .toast-text {
+      flex: 1;
+      text-align: left;
+      min-width: 0;
+    }
+
+    .toast-title {
+      font-size: 18px;
+      font-weight: 800;
+      line-height: 1.1;
+      margin-bottom: 2px;
+    }
+
+    .toast-message {
+      font-size: 15px;
+      line-height: 1.35;
+      word-break: break-word;
+    }
+
+    .toast-close {
+      flex: 0 0 auto;
+      border: none;
+      background: transparent;
+      color: inherit;
+      font-size: 18px;
+      font-weight: 700;
+      cursor: pointer;
+      opacity: 0.75;
+      padding: 4px 8px;
+    }
+
+    .toast-close:hover {
+      opacity: 1;
+    }
+
+    .toast.removing {
+      animation: toastOut 0.18s ease-in forwards;
+    }
+
+    @keyframes toastIn {
+      from {
+        opacity: 0;
+        transform: translateY(16px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @keyframes toastOut {
+      from {
+        opacity: 1;
+        transform: translateY(0);
+      }
+      to {
+        opacity: 0;
+        transform: translateY(10px);
+      }
     }
 
     @media (max-width: 900px) {
@@ -269,18 +409,27 @@
   </style>
 </head>
 <body>
+  <div class="topbar">
+    <a href="/" class="home-button">
+      <svg class="home-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+        <path d="M15 6L9 12L15 18" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      Home
+    </a>
+  </div>
+
   <div class="wrap">
-    <div class="topbar">
+    <div class="topbar-main">
       <div class="logo">L</div>
       <div>
         <h1>Lojiq WMS</h1>
-        <div class="subtitle">Inbound parcel receiving</div>
+        <div class="subtitle">Verify products inside parcels</div>
       </div>
     </div>
 
     <div class="grid">
       <div class="card">
-        <h2>New Parcel</h2>
+        <h2>Verify Parcel</h2>
 
         <label class="label" for="trackingInput">Tracking Number</label>
         <input
@@ -297,15 +446,13 @@
         <div class="status-box">
           <div>Status: <strong id="statusText">Waiting for tracking scan</strong></div>
           <div>Tracking: <strong id="trackingDisplay">—</strong></div>
-          <div>Unique barcodes: <span class="pill" id="uniqueCount">0</span></div>
+          <div>Unique GTINs: <span class="pill" id="uniqueCount">0</span></div>
           <div>Total items: <span class="pill" id="totalCount">0</span></div>
         </div>
 
         <div class="scan-note">
-          After the parcel is started, your scanner can keep scanning item barcodes one after another.
+          After the parcel is started, scan all product GTINs one after another.
         </div>
-
-        <div id="messageBox" class="message"></div>
       </div>
 
       <div class="card">
@@ -330,7 +477,7 @@
         </div>
 
         <div class="actions">
-          <button class="button secondary" id="focusScannerBtn">Focus Scanner</button>
+          <button class="button secondary" id="focusScannerBtn">Refocus Scanner</button>
           <button class="button" id="submitBtn">Submit Parcel</button>
         </div>
       </div>
@@ -346,6 +493,8 @@
     spellcheck="false"
   />
 
+  <div id="toastStack" class="toast-stack"></div>
+
   <script>
     const trackingInput = document.getElementById("trackingInput");
     const startBtn = document.getElementById("startBtn");
@@ -353,33 +502,18 @@
     const submitBtn = document.getElementById("submitBtn");
     const focusScannerBtn = document.getElementById("focusScannerBtn");
     const scanInput = document.getElementById("scanInput");
-  
+
     const statusText = document.getElementById("statusText");
     const trackingDisplay = document.getElementById("trackingDisplay");
     const uniqueCount = document.getElementById("uniqueCount");
     const totalCount = document.getElementById("totalCount");
     const itemsTableBody = document.getElementById("itemsTableBody");
-    const messageBox = document.getElementById("messageBox");
-  
+    const toastStack = document.getElementById("toastStack");
+
     let parcelStarted = false;
     let trackingNumber = "";
     let items = [];
-  
-    function showMessage(text, type = "success") {
-      messageBox.textContent = text;
-      messageBox.className = `message ${type}`;
-    }
-  
-    function clearMessage() {
-      messageBox.textContent = "";
-      messageBox.className = "message";
-    }
-  
-    function focusScanner() {
-      scanInput.focus();
-      showMessage("Scanner ready.", "success");
-    }
-  
+
     function escapeHtml(value) {
       return String(value ?? "")
         .replace(/&/g, "&amp;")
@@ -388,7 +522,44 @@
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#039;");
     }
-  
+
+    function showToast(message, type = "success", title = "") {
+      const toast = document.createElement("div");
+      toast.className = `toast ${type}`;
+
+      const resolvedTitle = title || (type === "success" ? "Success" : "Error");
+      const icon = type === "success" ? "✓" : "✕";
+
+      toast.innerHTML = `
+        <div class="toast-inner">
+          <div class="toast-icon">${icon}</div>
+          <div class="toast-text">
+            <div class="toast-title">${resolvedTitle}</div>
+            <div class="toast-message">${escapeHtml(message)}</div>
+          </div>
+          <button class="toast-close" type="button" aria-label="Close">✕</button>
+        </div>
+      `;
+
+      const closeBtn = toast.querySelector(".toast-close");
+
+      function removeToast() {
+        if (toast.classList.contains("removing")) return;
+        toast.classList.add("removing");
+        setTimeout(() => {
+          toast.remove();
+        }, 180);
+      }
+
+      closeBtn.addEventListener("click", removeToast);
+      toastStack.appendChild(toast);
+      setTimeout(removeToast, 5000);
+    }
+
+    function focusScanner() {
+      scanInput.focus();
+    }
+
     function renderTable() {
       if (items.length === 0) {
         itemsTableBody.innerHTML = `
@@ -400,7 +571,7 @@
         totalCount.textContent = "0";
         return;
       }
-  
+
       itemsTableBody.innerHTML = items.map((item, index) => `
         <tr>
           <td>${escapeHtml(item.gtin)}</td>
@@ -423,99 +594,96 @@
           <td class="qty">${item.quantity}</td>
         </tr>
       `).join("");
-  
+
       uniqueCount.textContent = String(items.length);
       totalCount.textContent = String(
         items.reduce((sum, item) => sum + item.quantity, 0)
       );
     }
-  
-    async function lookupProduct(productCode) {
+
+    async function lookupProduct(gtin) {
       const response = await fetch("/api/lookup-product", {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          gtin: productCode
+          gtin
         })
       });
-  
+
       const data = await response.json();
-  
+
       if (!response.ok) {
         throw new Error(data.details || data.error || "Lookup failed");
       }
-  
+
       return data;
     }
-  
-    async function handleScannedBarcode(productCode) {
-      const cleanCode = productCode.trim();
+
+    async function handleScannedBarcode(gtin) {
+      const cleanCode = gtin.trim();
       if (!cleanCode) return;
-  
-      clearMessage();
-  
+
       const existingItem = items.find(
         (item) => item.gtin === cleanCode
       );
-  
+
       if (existingItem) {
         existingItem.quantity += 1;
         renderTable();
-        showMessage(`Scanned again: ${cleanCode} quantity updated.`, "success");
+        showToast(`Scanned again: ${cleanCode}. Quantity updated.`, "success", "Success");
         focusScanner();
         return;
       }
-  
+
       const newItem = {
         gtin: cleanCode,
         sku: "",
         size: "",
         quantity: 1
       };
-  
+
       items.push(newItem);
       renderTable();
-      showMessage(`Scanned new barcode: ${cleanCode}`, "success");
-  
+      showToast(`Scanned new GTIN: ${cleanCode}.`, "success", "Success");
+
       try {
         const lookup = await lookupProduct(cleanCode);
-  
+
         if (lookup.found) {
           newItem.sku = lookup.sku || "";
           newItem.size = lookup.size || "";
           renderTable();
-          showMessage(`Matched barcode ${cleanCode} from Stock Levels.`, "success");
+          showToast(`Matched GTIN ${cleanCode} from Stock Levels.`, "success", "Success");
         } else {
-          showMessage(`Barcode ${cleanCode} not found. Please fill SKU and Size manually.`, "error");
+          showToast(`GTIN ${cleanCode} was not found. Please fill SKU and Size manually.`, "error", "Error");
         }
       } catch (error) {
-        showMessage(`Lookup error: ${error.message}`, "error");
+        showToast(`Lookup error: ${error.message}`, "error", "Error");
       }
-  
+
       focusScanner();
     }
-  
+
     function startParcel() {
       const value = trackingInput.value.trim();
-  
+
       if (!value) {
         alert("Please scan the tracking number first.");
         trackingInput.focus();
         return;
       }
-  
+
       trackingNumber = value;
       parcelStarted = true;
-  
+
       statusText.textContent = "Parcel active — ready to scan item barcodes";
       trackingDisplay.textContent = trackingNumber;
-  
-      clearMessage();
+
       focusScanner();
     }
-  
+
     function resetParcel() {
       parcelStarted = false;
       trackingNumber = "";
@@ -524,39 +692,36 @@
       scanInput.value = "";
       statusText.textContent = "Waiting for tracking scan";
       trackingDisplay.textContent = "—";
-      clearMessage();
       renderTable();
       trackingInput.focus();
     }
-  
+
     async function submitParcel() {
-      clearMessage();
-  
       if (!parcelStarted) {
         alert("Start the parcel first.");
         return;
       }
-  
+
       if (!trackingNumber) {
         alert("Missing tracking number.");
         return;
       }
-  
+
       if (!items.length) {
         alert("No items scanned.");
         return;
       }
-  
+
       for (const item of items) {
         if (!item.gtin.trim()) {
           alert("One item is missing Product GTIN.");
           return;
         }
       }
-  
+
       submitBtn.disabled = true;
       submitBtn.textContent = "Submitting...";
-  
+
       try {
         const response = await fetch("/api/submit-inbound", {
           method: "POST",
@@ -568,18 +733,19 @@
             items
           })
         });
-  
+
         const data = await response.json();
-  
+
         if (!response.ok) {
           throw new Error(data.details || data.error || "Submit failed");
         }
-  
-        showMessage(
-          `Parcel submitted successfully. ${data.created_count} rows created.`,
-          "success"
+
+        showToast(
+          `Parcel submitted successfully. ${data.updated_count} updated, ${data.created_count} created.`,
+          "success",
+          "Success"
         );
-  
+
         parcelStarted = false;
         trackingNumber = "";
         items = [];
@@ -589,69 +755,68 @@
         trackingDisplay.textContent = "—";
         renderTable();
         trackingInput.focus();
-  
       } catch (error) {
-        showMessage(`Submit error: ${error.message}`, "error");
+        showToast(`Submit error: ${error.message}`, "error", "Error");
       } finally {
         submitBtn.disabled = false;
         submitBtn.textContent = "Submit Parcel";
       }
     }
-  
+
     startBtn.addEventListener("click", startParcel);
     resetBtn.addEventListener("click", resetParcel);
     focusScannerBtn.addEventListener("click", focusScanner);
     submitBtn.addEventListener("click", submitParcel);
-  
+
     trackingInput.addEventListener("keydown", (event) => {
       if (event.key === "Enter") {
         event.preventDefault();
         startParcel();
       }
     });
-  
+
     scanInput.addEventListener("keydown", async (event) => {
       if (event.key !== "Enter") return;
       event.preventDefault();
-  
+
       if (!parcelStarted) {
-        showMessage("Start a parcel first before scanning items.", "error");
+        showToast("Start a parcel first before scanning items.", "error", "Error");
         return;
       }
-  
+
       const scannedValue = scanInput.value.trim();
       scanInput.value = "";
-  
+
       if (!scannedValue) return;
-  
+
       await handleScannedBarcode(scannedValue);
     });
-  
+
     itemsTableBody.addEventListener("input", (event) => {
       const target = event.target;
       if (!(target instanceof HTMLInputElement)) return;
-  
+
       const index = Number(target.dataset.index);
       const field = target.dataset.field;
-  
+
       if (!Number.isInteger(index) || !items[index]) return;
       if (!["sku", "size"].includes(field)) return;
-  
+
       items[index][field] = target.value;
     });
-  
+
     document.addEventListener("click", (event) => {
       const target = event.target;
       const clickedInsideEditableField =
         target === trackingInput ||
         target === scanInput ||
         (target instanceof HTMLInputElement && target.dataset.field);
-  
+
       if (!clickedInsideEditableField && parcelStarted) {
         focusScanner();
       }
     });
-  
+
     renderTable();
     trackingInput.focus();
   </script>
