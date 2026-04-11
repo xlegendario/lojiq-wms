@@ -528,32 +528,32 @@
 
     async function submitParcel() {
       clearMessage();
-
+    
       if (!parcelStarted) {
         alert("Start the parcel first.");
         return;
       }
-
+    
       if (!trackingNumber) {
         alert("Missing tracking number.");
         return;
       }
-
+    
       if (!items.length) {
         alert("No items scanned.");
         return;
       }
-
+    
       for (const item of items) {
         if (!item.productCode.trim()) {
           alert("One item is missing Product Code.");
           return;
         }
       }
-
+    
       submitBtn.disabled = true;
       submitBtn.textContent = "Submitting...";
-
+    
       try {
         const response = await fetch("/api/submit-inbound", {
           method: "POST",
@@ -565,15 +565,28 @@
             items
           })
         });
-
+    
         const data = await response.json();
-
+    
         if (!response.ok) {
           throw new Error(data.details || data.error || "Submit failed");
         }
-
-        showMessage(`Parcel submitted successfully. ${data.created_count} rows created.`, "success");
-        resetParcel();
+    
+        showMessage(
+          `Parcel submitted successfully. ${data.created_count} rows created.`,
+          "success"
+        );
+    
+        parcelStarted = false;
+        trackingNumber = "";
+        items = [];
+        trackingInput.value = "";
+        scanInput.value = "";
+        statusText.textContent = "Waiting for tracking scan";
+        trackingDisplay.textContent = "—";
+        renderTable();
+        trackingInput.focus();
+    
       } catch (error) {
         showMessage(`Submit error: ${error.message}`, "error");
       } finally {
