@@ -104,7 +104,6 @@ app.post("/api/submit-inbound", async (req, res) => {
       submittedType === "Regular"
         ? submittedType
         : null;
-    "Type": typeToSave
 
     if (!trackingNumber) {
       return res.status(400).json({ error: "Missing tracking_number" });
