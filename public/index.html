@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Lojiq WMS</title>
+  <style>
+    :root {
+      --bg: #07111F;
+      --panel: #0E2238;
+      --border: #163252;
+      --primary: #2F80ED;
+      --primary-soft: #66B3FF;
+      --text: #DCEBFF;
+      --muted: #8FAECC;
+    }
+
+    * {
+      box-sizing: border-box;
+      font-family: Arial, Helvetica, sans-serif;
+    }
+
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at top, rgba(47,128,237,0.18), transparent 30%),
+        linear-gradient(180deg, #050D18, var(--bg));
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 1000px;
+      padding: 40px 20px;
+      text-align: center;
+    }
+
+    .logo {
+      font-size: 48px;
+      font-weight: bold;
+      margin-bottom: 10px;
+      color: var(--primary-soft);
+      text-shadow: 0 0 20px rgba(47,128,237,0.4);
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 36px;
+    }
+
+    .subtitle {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 16px;
+      margin-bottom: 40px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 20px;
+    }
+
+    .card {
+      background: linear-gradient(
+        180deg,
+        rgba(16,41,68,0.95),
+        rgba(14,34,56,0.95)
+      );
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 30px 20px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      text-decoration: none;
+      color: var(--text);
+      box-shadow: 0 10px 25px rgba(0,0,0,0.25);
+    }
+
+    .card:hover {
+      transform: translateY(-4px);
+      border-color: var(--primary);
+      box-shadow: 0 15px 35px rgba(47,128,237,0.25);
+    }
+
+    .icon {
+      font-size: 40px;
+      margin-bottom: 15px;
+    }
+
+    .card-title {
+      font-size: 18px;
+      font-weight: bold;
+      margin-bottom: 5px;
+    }
+
+    .card-desc {
+      font-size: 14px;
+      color: var(--muted);
+    }
+
+    .footer {
+      margin-top: 40px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="logo">LOJIQ</div>
+    <h1>Lojiq WMS</h1>
+    <div class="subtitle">
+      Warehouse Management System
+    </div>
+
+    <div class="grid">
+      <a href="/inbound.html" class="card">
+        <div class="icon">📦</div>
+        <div class="card-title">New Inbound Parcel</div>
+        <div class="card-desc">
+          Receive and scan incoming stock
+        </div>
+      </a>
+
+      <a href="#" class="card">
+        <div class="icon">🚚</div>
+        <div class="card-title">Outbound Shipments</div>
+        <div class="card-desc">
+          Process outgoing orders
+        </div>
+      </a>
+
+      <a href="#" class="card">
+        <div class="icon">📊</div>
+        <div class="card-title">Inventory</div>
+        <div class="card-desc">
+          View and manage stock levels
+        </div>
+      </a>
+
+      <a href="#" class="card">
+        <div class="icon">🔎</div>
+        <div class="card-title">Product Codes</div>
+        <div class="card-desc">
+          Manage barcode database
+        </div>
+      </a>
+    </div>
+
+    <div class="footer">
+      © 2025 Lojiq WMS — All rights reserved
+    </div>
+  </div>
+</body>
+</html>
