@@ -377,6 +377,16 @@
   
     function focusScanner() {
       scanInput.focus();
+      showMessage("Scanner ready.", "success");
+    }
+  
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
     }
   
     function renderTable() {
@@ -393,10 +403,10 @@
   
       itemsTableBody.innerHTML = items.map((item, index) => `
         <tr>
-          <td>${item.productCode}</td>
+          <td>${escapeHtml(item.productCode)}</td>
           <td>
             <input
-              value="${item.sku || ""}"
+              value="${escapeHtml(item.sku)}"
               placeholder="Enter SKU"
               data-index="${index}"
               data-field="sku"
@@ -404,7 +414,7 @@
           </td>
           <td>
             <input
-              value="${item.size || ""}"
+              value="${escapeHtml(item.size)}"
               placeholder="Enter size"
               data-index="${index}"
               data-field="size"
@@ -418,6 +428,73 @@
       totalCount.textContent = String(
         items.reduce((sum, item) => sum + item.quantity, 0)
       );
+    }
+  
+    async function lookupProduct(productCode) {
+      const response = await fetch("/api/lookup-product", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          product_code: productCode
+        })
+      });
+  
+      const data = await response.json();
+  
+      if (!response.ok) {
+        throw new Error(data.details || data.error || "Lookup failed");
+      }
+  
+      return data;
+    }
+  
+    async function handleScannedBarcode(productCode) {
+      const cleanCode = productCode.trim();
+      if (!cleanCode) return;
+  
+      clearMessage();
+  
+      const existingItem = items.find(
+        (item) => item.productCode === cleanCode
+      );
+  
+      if (existingItem) {
+        existingItem.quantity += 1;
+        renderTable();
+        showMessage(`Scanned again: ${cleanCode} quantity updated.`, "success");
+        focusScanner();
+        return;
+      }
+  
+      const newItem = {
+        productCode: cleanCode,
+        sku: "",
+        size: "",
+        quantity: 1
+      };
+  
+      items.push(newItem);
+      renderTable();
+      showMessage(`Scanned new barcode: ${cleanCode}`, "success");
+  
+      try {
+        const lookup = await lookupProduct(cleanCode);
+  
+        if (lookup.found) {
+          newItem.sku = lookup.sku || "";
+          newItem.size = lookup.size || "";
+          renderTable();
+          showMessage(`Matched barcode ${cleanCode} from Stock Levels.`, "success");
+        } else {
+          showMessage(`Barcode ${cleanCode} not found. Please fill SKU and Size manually.`, "error");
+        }
+      } catch (error) {
+        showMessage(`Lookup error: ${error.message}`, "error");
+      }
+  
+      focusScanner();
     }
   
     function startParcel() {
@@ -452,9 +529,79 @@
       trackingInput.focus();
     }
   
+    async function submitParcel() {
+      clearMessage();
+  
+      if (!parcelStarted) {
+        alert("Start the parcel first.");
+        return;
+      }
+  
+      if (!trackingNumber) {
+        alert("Missing tracking number.");
+        return;
+      }
+  
+      if (!items.length) {
+        alert("No items scanned.");
+        return;
+      }
+  
+      for (const item of items) {
+        if (!item.productCode.trim()) {
+          alert("One item is missing Product Code.");
+          return;
+        }
+      }
+  
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Submitting...";
+  
+      try {
+        const response = await fetch("/api/submit-inbound", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            tracking_number: trackingNumber,
+            items
+          })
+        });
+  
+        const data = await response.json();
+  
+        if (!response.ok) {
+          throw new Error(data.details || data.error || "Submit failed");
+        }
+  
+        showMessage(
+          `Parcel submitted successfully. ${data.created_count} rows created.`,
+          "success"
+        );
+  
+        parcelStarted = false;
+        trackingNumber = "";
+        items = [];
+        trackingInput.value = "";
+        scanInput.value = "";
+        statusText.textContent = "Waiting for tracking scan";
+        trackingDisplay.textContent = "—";
+        renderTable();
+        trackingInput.focus();
+  
+      } catch (error) {
+        showMessage(`Submit error: ${error.message}`, "error");
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Submit Parcel";
+      }
+    }
+  
     startBtn.addEventListener("click", startParcel);
     resetBtn.addEventListener("click", resetParcel);
     focusScannerBtn.addEventListener("click", focusScanner);
+    submitBtn.addEventListener("click", submitParcel);
   
     trackingInput.addEventListener("keydown", (event) => {
       if (event.key === "Enter") {
@@ -463,7 +610,50 @@
       }
     });
   
+    scanInput.addEventListener("keydown", async (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+  
+      if (!parcelStarted) {
+        showMessage("Start a parcel first before scanning items.", "error");
+        return;
+      }
+  
+      const scannedValue = scanInput.value.trim();
+      scanInput.value = "";
+  
+      if (!scannedValue) return;
+  
+      await handleScannedBarcode(scannedValue);
+    });
+  
+    itemsTableBody.addEventListener("input", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLInputElement)) return;
+  
+      const index = Number(target.dataset.index);
+      const field = target.dataset.field;
+  
+      if (!Number.isInteger(index) || !items[index]) return;
+      if (!["sku", "size"].includes(field)) return;
+  
+      items[index][field] = target.value;
+    });
+  
+    document.addEventListener("click", (event) => {
+      const target = event.target;
+      const clickedInsideEditableField =
+        target === trackingInput ||
+        target === scanInput ||
+        (target instanceof HTMLInputElement && target.dataset.field);
+  
+      if (!clickedInsideEditableField && parcelStarted) {
+        focusScanner();
+      }
+    });
+  
     renderTable();
+    trackingInput.focus();
   </script>
 </body>
 </html>
