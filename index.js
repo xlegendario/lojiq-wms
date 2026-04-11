@@ -106,7 +106,11 @@ app.post("/api/submit-inbound", async (req, res) => {
       return res.status(400).json({ error: "No items provided" });
     }
 
-    const recordsToCreate = items.map((item) => {
+    const now = new Date().toISOString();
+    let createdCount = 0;
+    let updatedCount = 0;
+
+    for (const item of items) {
       const gtin = asText(item.gtin);
       const sku = asText(item.sku);
       const size = asText(item.size);
@@ -120,30 +124,47 @@ app.post("/api/submit-inbound", async (req, res) => {
         throw new Error(`Invalid quantity for GTIN ${gtin}`);
       }
 
-      return {
-        fields: {
+      const safeTracking = escapeFormulaValue(trackingNumber);
+      const safeGtin = escapeFormulaValue(gtin);
+
+      const existingRecords = await airtable(AIRTABLE_INCOMING_STOCK_TABLE)
+        .select({
+          filterByFormula: `AND(TRIM({Tracking Number} & '') = '${safeTracking}', TRIM({Product GTIN} & '') = '${safeGtin}')`,
+          maxRecords: 1
+        })
+        .firstPage();
+
+      if (existingRecords.length > 0) {
+        await airtable(AIRTABLE_INCOMING_STOCK_TABLE).update(existingRecords[0].id, {
           "Tracking Number": trackingNumber,
           "Product GTIN": gtin,
           "SKU": sku,
           "Size": size,
           "Quantity": quantity,
           "Status": "Verified",
-          "Verified At": new Date().toISOString()
-        }
-      };
-    });
+          "Verified At": now
+        });
 
-    const createdRecords = [];
+        updatedCount += 1;
+      } else {
+        await airtable(AIRTABLE_INCOMING_STOCK_TABLE).create({
+          "Tracking Number": trackingNumber,
+          "Product GTIN": gtin,
+          "SKU": sku,
+          "Size": size,
+          "Quantity": quantity,
+          "Status": "Verified",
+          "Verified At": now
+        });
 
-    for (let i = 0; i < recordsToCreate.length; i += 10) {
-      const batch = recordsToCreate.slice(i, i + 10);
-      const createdBatch = await airtable(AIRTABLE_INCOMING_STOCK_TABLE).create(batch);
-      createdRecords.push(...createdBatch);
+        createdCount += 1;
+      }
     }
 
     return res.status(200).json({
       ok: true,
-      created_count: createdRecords.length
+      created_count: createdCount,
+      updated_count: updatedCount
     });
   } catch (error) {
     console.error("submit-inbound failed:", error);
