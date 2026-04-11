@@ -1,0 +1,157 @@
+import dotenv from "dotenv";
+import express from "express";
+import path from "path";
+import { fileURLToPath } from "url";
+import Airtable from "airtable";
+
+dotenv.config();
+
+const app = express();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+app.use(express.static(path.join(__dirname, "public")));
+app.use(express.json({ limit: "2mb" }));
+
+const {
+  PORT = 3000,
+  AIRTABLE_TOKEN,
+  AIRTABLE_BASE_ID,
+  AIRTABLE_STOCK_LEVELS_TABLE = "Stock Levels",
+  AIRTABLE_INCOMING_STOCK_TABLE = "Incoming Stock"
+} = process.env;
+
+if (!AIRTABLE_TOKEN) {
+  throw new Error("Missing AIRTABLE_TOKEN in .env");
+}
+
+if (!AIRTABLE_BASE_ID) {
+  throw new Error("Missing AIRTABLE_BASE_ID in .env");
+}
+
+const airtable = new Airtable({ apiKey: AIRTABLE_TOKEN }).base(AIRTABLE_BASE_ID);
+
+function asText(value) {
+  if (value === null || value === undefined) return "";
+  return String(value).trim();
+}
+
+function escapeFormulaValue(value) {
+  return asText(value).replace(/'/g, "\\'");
+}
+
+async function findStockLevelByProductCode(productCode) {
+  const safeCode = escapeFormulaValue(productCode);
+
+  const records = await airtable(AIRTABLE_STOCK_LEVELS_TABLE)
+    .select({
+      filterByFormula: `TRIM({Product Code} & '') = '${safeCode}'`,
+      maxRecords: 1
+    })
+    .firstPage();
+
+  return records[0] || null;
+}
+
+app.get("/", (_req, res) => {
+  res.redirect("/inbound.html");
+});
+
+app.post("/api/lookup-product", async (req, res) => {
+  try {
+    const productCode = asText(req.body?.product_code);
+
+    if (!productCode) {
+      return res.status(400).json({ error: "Missing product_code" });
+    }
+
+    const record = await findStockLevelByProductCode(productCode);
+
+    if (!record) {
+      return res.status(200).json({
+        found: false,
+        product_code: productCode,
+        sku: "",
+        size: ""
+      });
+    }
+
+    const fields = record.fields || {};
+
+    return res.status(200).json({
+      found: true,
+      product_code: productCode,
+      sku: asText(fields["SKU"]),
+      size: asText(fields["Size"])
+    });
+  } catch (error) {
+    console.error("lookup-product failed:", error);
+    return res.status(500).json({
+      error: "Failed to lookup product",
+      details: error.message
+    });
+  }
+});
+
+app.post("/api/submit-inbound", async (req, res) => {
+  try {
+    const trackingNumber = asText(req.body?.tracking_number);
+    const items = Array.isArray(req.body?.items) ? req.body.items : [];
+
+    if (!trackingNumber) {
+      return res.status(400).json({ error: "Missing tracking_number" });
+    }
+
+    if (!items.length) {
+      return res.status(400).json({ error: "No items provided" });
+    }
+
+    const recordsToCreate = items.map((item) => {
+      const productCode = asText(item.productCode);
+      const sku = asText(item.sku);
+      const size = asText(item.size);
+      const quantity = Number(item.quantity) || 0;
+
+      if (!productCode) {
+        throw new Error("One or more items are missing Product Code");
+      }
+
+      if (quantity <= 0) {
+        throw new Error(`Invalid quantity for product code ${productCode}`);
+      }
+
+      return {
+        fields: {
+          "Tracking Number": trackingNumber,
+          "Product Code": productCode,
+          "SKU": sku,
+          "Size": size,
+          "Quantity": quantity
+        }
+      };
+    });
+
+    const createdRecords = [];
+
+    for (let i = 0; i < recordsToCreate.length; i += 10) {
+      const batch = recordsToCreate.slice(i, i + 10);
+      const createdBatch = await airtable(AIRTABLE_INCOMING_STOCK_TABLE).create(batch);
+      createdRecords.push(...createdBatch);
+    }
+
+    return res.status(200).json({
+      ok: true,
+      created_count: createdRecords.length
+    });
+  } catch (error) {
+    console.error("submit-inbound failed:", error);
+    return res.status(500).json({
+      error: "Failed to submit inbound parcel",
+      details: error.message
+    });
+  }
+});
+
+app.listen(PORT, () => {
+  console.log(`Lojiq WMS running on port ${PORT}`);
+});
