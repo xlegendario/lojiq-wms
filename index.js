@@ -58,7 +58,8 @@ async function findStockLevelByGTIN(gtin) {
 async function getInboundPartyOptions() {
   const sellerRecords = await airtable(AIRTABLE_SELLERS_TABLE)
     .select({
-      fields: ["Full Name"],
+      fields: ["Full Name", "Supplier/Forwarder?"],
+      filterByFormula: `{Supplier/Forwarder?} = 1`,
       sort: [{ field: "Full Name", direction: "asc" }]
     })
     .all();
@@ -71,17 +72,21 @@ async function getInboundPartyOptions() {
     })
     .all();
 
-  const sellerOptions = sellerRecords.map((record) => ({
-    id: record.id,
-    label: asText(record.fields["Full Name"]),
-    source: "seller"
-  })).filter((option) => option.label);
+  const sellerOptions = sellerRecords
+    .map((record) => ({
+      id: record.id,
+      label: asText(record.fields["Full Name"]),
+      source: "seller"
+    }))
+    .filter((option) => option.label);
 
-  const merchantOptions = merchantRecords.map((record) => ({
-    id: record.id,
-    label: asText(record.fields["Store Name"]),
-    source: "merchant"
-  })).filter((option) => option.label);
+  const merchantOptions = merchantRecords
+    .map((record) => ({
+      id: record.id,
+      label: asText(record.fields["Store Name"]),
+      source: "merchant"
+    }))
+    .filter((option) => option.label);
 
   return [...sellerOptions, ...merchantOptions];
 }
