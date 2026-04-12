@@ -55,6 +55,23 @@ async function findStockLevelByGTIN(gtin) {
   return records[0] || null;
 }
 
+async function findIncomingStockByGTIN(gtin) {
+  const safeCode = escapeFormulaValue(gtin);
+
+  const records = await airtable(AIRTABLE_INCOMING_STOCK_TABLE)
+    .select({
+      filterByFormula: `AND(
+        TRIM({Product GTIN} & '') = '${safeCode}',
+        TRIM({SKU} & '') != '',
+        TRIM({Size} & '') != ''
+      )`,
+      maxRecords: 1
+    })
+    .firstPage();
+
+  return records[0] || null;
+}
+
 async function getInboundPartyOptions() {
   const sellerRecords = await airtable(AIRTABLE_SELLERS_TABLE)
     .select({
@@ -120,14 +137,23 @@ app.post("/api/lookup-product", async (req, res) => {
       return res.status(400).json({ error: "Missing gtin" });
     }
 
-    const record = await findStockLevelByGTIN(gtin);
+    // 1. First search Incoming Stock
+    let record = await findIncomingStockByGTIN(gtin);
+    let source = "incoming_stock";
+
+    // 2. Fallback to Stock Levels
+    if (!record) {
+      record = await findStockLevelByGTIN(gtin);
+      source = "stock_levels";
+    }
 
     if (!record) {
       return res.status(200).json({
         found: false,
         gtin,
         sku: "",
-        size: ""
+        size: "",
+        source: null
       });
     }
 
@@ -137,7 +163,8 @@ app.post("/api/lookup-product", async (req, res) => {
       found: true,
       gtin,
       sku: asText(fields["SKU"]),
-      size: asText(fields["Size"])
+      size: asText(fields["Size"]),
+      source
     });
   } catch (error) {
     console.error("lookup-product failed:", error);
