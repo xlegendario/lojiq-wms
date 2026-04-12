@@ -18,7 +18,9 @@ const {
   AIRTABLE_TOKEN,
   AIRTABLE_BASE_ID,
   AIRTABLE_STOCK_LEVELS_TABLE = "Stock Levels",
-  AIRTABLE_INCOMING_STOCK_TABLE = "Incoming Stock"
+  AIRTABLE_INCOMING_STOCK_TABLE = "Incoming Stock",
+  AIRTABLE_SELLERS_TABLE = "Sellers Database",
+  AIRTABLE_MERCHANTS_TABLE = "Merchants"
 } = process.env;
 
 if (!AIRTABLE_TOKEN) {
@@ -53,8 +55,56 @@ async function findStockLevelByGTIN(gtin) {
   return records[0] || null;
 }
 
+async function getInboundPartyOptions() {
+  const sellerRecords = await airtable(AIRTABLE_SELLERS_TABLE)
+    .select({
+      fields: ["Full Name"],
+      sort: [{ field: "Full Name", direction: "asc" }]
+    })
+    .all();
+
+  const merchantRecords = await airtable(AIRTABLE_MERCHANTS_TABLE)
+    .select({
+      fields: ["Full Name", "Supplier/Forwarder?"],
+      filterByFormula: `{Supplier/Forwarder?} = 1`,
+      sort: [{ field: "Full Name", direction: "asc" }]
+    })
+    .all();
+
+  const sellerOptions = sellerRecords.map((record) => ({
+    id: record.id,
+    label: asText(record.fields["Full Name"]),
+    source: "seller"
+  })).filter((option) => option.label);
+
+  const merchantOptions = merchantRecords.map((record) => ({
+    id: record.id,
+    label: asText(record.fields["Full Name"]),
+    source: "merchant"
+  })).filter((option) => option.label);
+
+  return [...sellerOptions, ...merchantOptions];
+}
+
 app.get("/", (_req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
+});
+
+app.get("/api/inbound-parties", async (_req, res) => {
+  try {
+    const options = await getInboundPartyOptions();
+
+    return res.status(200).json({
+      ok: true,
+      options
+    });
+  } catch (error) {
+    console.error("inbound-parties failed:", error);
+    return res.status(500).json({
+      error: "Failed to load inbound party options",
+      details: error.message
+    });
+  }
 });
 
 app.post("/api/lookup-product", async (req, res) => {
@@ -97,6 +147,8 @@ app.post("/api/submit-inbound", async (req, res) => {
   try {
     const trackingNumber = asText(req.body?.tracking_number);
     const submittedType = asText(req.body?.type);
+    const selectedPartyId = asText(req.body?.party_id);
+    const selectedPartySource = asText(req.body?.party_source);
     const items = Array.isArray(req.body?.items) ? req.body.items : [];
 
     const typeToSave =
@@ -105,6 +157,15 @@ app.post("/api/submit-inbound", async (req, res) => {
       submittedType === "Regular"
         ? submittedType
         : null;
+    const clientFieldValue =
+      selectedPartySource === "merchant" && selectedPartyId
+        ? [selectedPartyId]
+        : [];
+    
+    const supplierFieldValue =
+      selectedPartySource === "seller" && selectedPartyId
+        ? [selectedPartyId]
+        : [];
 
     if (!trackingNumber) {
       return res.status(400).json({ error: "Missing tracking_number" });
@@ -178,6 +239,8 @@ app.post("/api/submit-inbound", async (req, res) => {
           "Size": size,
           "Quantity": quantity,
           "Type": typeToSave,
+          "Client": clientFieldValue,
+          "Supplier": supplierFieldValue,
           "Status": "Verified",
           "Verified At": now,
           "Received At": receivedAtToUse
@@ -195,6 +258,8 @@ app.post("/api/submit-inbound", async (req, res) => {
           "Size": size,
           "Quantity": quantity,
           "Type": typeToSave,
+          "Client": clientFieldValue,
+          "Supplier": supplierFieldValue,
           "Status": "Verified",
           "Verified At": now,
           "Received At": receivedAtToUse
@@ -212,6 +277,8 @@ app.post("/api/submit-inbound", async (req, res) => {
         "Size": size,
         "Quantity": quantity,
         "Type": typeToSave,
+        "Client": clientFieldValue,
+        "Supplier": supplierFieldValue,
         "Status": "Verified",
         "Verified At": now,
         "Received At": parcelReceivedAt
