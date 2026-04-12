@@ -786,40 +786,24 @@
 
     function startParcelFromTracking() {
       const value = trackingInput.value.trim();
-      const selectedType = typeSelect.value;
-      const selectedPartyValue = partySelect.value;
     
       if (!value) {
         return;
       }
     
-      if (!selectedType) {
-        showToast("Please select a type.", "warning", "Warning");
-        typeSelect.focus();
-        return;
-      }
+      // Remove unwanted prefixes such as "Tracking"
+      const cleanedValue = value.replace(/^tracking/i, "").trim();
     
-      if (!selectedPartyValue) {
-        showToast("Please select a client.", "warning", "Warning");
-        partySelect.focus();
-        return;
-      }
-    
-      parcelType = selectedType;
-    
-      if (selectedPartyValue === "unknown") {
-        selectedPartyId = "";
-        selectedPartySource = "";
-      } else {
-        const [source, id] = selectedPartyValue.split(":");
-        selectedPartySource = source || "";
-        selectedPartyId = id || "";
-      }
-    
-      trackingNumber = value;
+      trackingNumber = cleanedValue;
       parcelStarted = true;
+    
+      // Clear the input to provide visual feedback
+      trackingInput.value = "";
+    
       updateStatusPanel();
       focusScanner();
+    
+      showToast(`Parcel ${trackingNumber} ready for verification.`, "success", "Success");
     }
 
     function resetParcel() {
@@ -852,12 +836,43 @@
         showToast("No items scanned.", "warning", "Warning");
         return;
       }
-
+      
       for (const item of items) {
         if (!item.gtin.trim()) {
           showToast("One item is missing Product GTIN.", "error", "Error");
           return;
         }
+      }
+      
+      const selectedType = typeSelect.value;
+      const selectedPartyValue = partySelect.value;
+      
+      if (!selectedType && !selectedPartyValue) {
+        showToast("Please fill Type and Client before submitting.", "warning", "Warning");
+        return;
+      }
+      
+      if (!selectedType) {
+        showToast("Please fill Type before submitting.", "warning", "Warning");
+        typeSelect.focus();
+        return;
+      }
+      
+      if (!selectedPartyValue) {
+        showToast("Please fill Client before submitting.", "warning", "Warning");
+        partySelect.focus();
+        return;
+      }
+      
+      parcelType = selectedType;
+      
+      if (selectedPartyValue === "unknown") {
+        selectedPartyId = "";
+        selectedPartySource = "";
+      } else {
+        const [source, id] = selectedPartyValue.split(":");
+        selectedPartySource = source || "";
+        selectedPartyId = id || "";
       }
 
       submitBtn.disabled = true;
