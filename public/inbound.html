@@ -70,8 +70,14 @@
       flex: 0 0 22px;
     }
 
-    .summary-type-row {
+    .summary-meta-row {
+      display: flex;
+      gap: 16px;
       margin-bottom: 16px;
+    }
+    
+    .summary-meta-group {
+      flex: 1;
     }
     
     .summary-type-label {
@@ -82,7 +88,7 @@
     }
     
     .summary-type-select {
-      max-width: 280px;
+      width: 100%;
     }
 
     .wrap {
@@ -494,15 +500,25 @@
       <div class="card">
         <h2>SUMMARY</h2>
 
-        <div class="summary-type-row">
-          <div class="summary-type-label">Type</div>
-          <select id="typeSelect" class="input summary-type-select" required>
-            <option value="" selected disabled>Select Type</option>
-            <option value="Consignment">Consignment</option>
-            <option value="Forwarding">Forwarding</option>
-            <option value="Regular">Regular</option>
-            <option value="Unknown">Unknown</option>
-          </select>
+        <div class="summary-meta-row">
+          <div class="summary-meta-group">
+            <div class="summary-type-label">Type</div>
+            <select id="typeSelect" class="input summary-type-select" required>
+              <option value="" selected disabled>Select Type</option>
+              <option value="Unknown">Unknown</option>
+              <option value="Consignment">Consignment</option>
+              <option value="Forwarding">Forwarding</option>
+              <option value="Regular">Regular</option>
+            </select>
+          </div>
+        
+          <div class="summary-meta-group">
+            <div class="summary-type-label">Client</div>
+            <select id="partySelect" class="input summary-type-select" required>
+              <option value="" selected disabled>Select Client</option>
+              <option value="unknown">Unknown</option>
+            </select>
+          </div>
         </div>
 
         <div class="table-wrap">
@@ -546,6 +562,7 @@
   <script>
     const trackingInput = document.getElementById("trackingInput");
     const typeSelect = document.getElementById("typeSelect");
+    const partySelect = document.getElementById("partySelect");
     const resetBtn = document.getElementById("resetBtn");
     const submitBtn = document.getElementById("submitBtn");
     const focusScannerBtn = document.getElementById("focusScannerBtn");
@@ -561,6 +578,8 @@
     let parcelStarted = false;
     let trackingNumber = "";
     let parcelType = "";
+    let selectedPartyId = "";
+    let selectedPartySource = "";
     let items = [];
 
     function escapeHtml(value) {
@@ -740,22 +759,65 @@
       focusScanner();
     }
 
+    async function loadInboundParties() {
+      try {
+        const response = await fetch("/api/inbound-parties");
+        const data = await response.json();
+    
+        if (!response.ok) {
+          throw new Error(data.details || data.error || "Failed to load parties");
+        }
+    
+        partySelect.innerHTML = `
+          <option value="" selected disabled>Select Client</option>
+          <option value="unknown">Unknown</option>
+        `;
+    
+        for (const option of data.options) {
+          const el = document.createElement("option");
+          el.value = `${option.source}:${option.id}`;
+          el.textContent = option.label;
+          partySelect.appendChild(el);
+        }
+      } catch (error) {
+        showToast(`Failed to load clients: ${error.message}`, "error", "Error");
+      }
+    }
+
     function startParcelFromTracking() {
       const value = trackingInput.value.trim();
       const selectedType = typeSelect.value;
+      const selectedPartyValue = partySelect.value;
     
-      if (!value) return;
+      if (!value) {
+        return;
+      }
     
       if (!selectedType) {
-        showToast("Please select a parcel type.", "warning");
+        showToast("Please select a type.", "warning", "Warning");
         typeSelect.focus();
         return;
       }
     
-      trackingNumber = value;
-      parcelType = selectedType;
-      parcelStarted = true;
+      if (!selectedPartyValue) {
+        showToast("Please select a client.", "warning", "Warning");
+        partySelect.focus();
+        return;
+      }
     
+      parcelType = selectedType;
+    
+      if (selectedPartyValue === "unknown") {
+        selectedPartyId = "";
+        selectedPartySource = "";
+      } else {
+        const [source, id] = selectedPartyValue.split(":");
+        selectedPartySource = source || "";
+        selectedPartyId = id || "";
+      }
+    
+      trackingNumber = value;
+      parcelStarted = true;
       updateStatusPanel();
       focusScanner();
     }
@@ -764,9 +826,12 @@
       parcelStarted = false;
       trackingNumber = "";
       parcelType = "";
+      selectedPartyId = "";
+      selectedPartySource = "";
       items = [];
       trackingInput.value = "";
       typeSelect.value = "";
+      partySelect.value = "";
       scanInput.value = "";
       renderTable();
       trackingInput.focus();
@@ -807,6 +872,8 @@
           body: JSON.stringify({
             tracking_number: trackingNumber,
             type: parcelType,
+            party_id: selectedPartyId,
+            party_source: selectedPartySource,
             items
           })
         });
@@ -825,8 +892,13 @@
 
         parcelStarted = false;
         trackingNumber = "";
+        parcelType = "";
+        selectedPartyId = "";
+        selectedPartySource = "";
         items = [];
         trackingInput.value = "";
+        typeSelect.value = "";
+        partySelect.value = "";
         scanInput.value = "";
         renderTable();
         trackingInput.focus();
@@ -910,7 +982,8 @@
     });
 
     renderTable();
-    trackingInput.focus();
+      loadInboundParties();
+      trackingInput.focus();
   </script>
 </body>
 </html>
