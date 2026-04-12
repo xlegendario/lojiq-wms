@@ -65,9 +65,9 @@ async function getInboundPartyOptions() {
 
   const merchantRecords = await airtable(AIRTABLE_MERCHANTS_TABLE)
     .select({
-      fields: ["Full Name", "Supplier/Forwarder?"],
+      fields: ["Store Name", "Supplier/Forwarder?"],
       filterByFormula: `{Supplier/Forwarder?} = 1`,
-      sort: [{ field: "Full Name", direction: "asc" }]
+      sort: [{ field: "Store Name", direction: "asc" }]
     })
     .all();
 
@@ -79,7 +79,7 @@ async function getInboundPartyOptions() {
 
   const merchantOptions = merchantRecords.map((record) => ({
     id: record.id,
-    label: asText(record.fields["Full Name"]),
+    label: asText(record.fields["Store Name"]),
     source: "merchant"
   })).filter((option) => option.label);
 
