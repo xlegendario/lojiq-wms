@@ -983,14 +983,18 @@
 
     document.addEventListener("click", (event) => {
       const target = event.target;
+    
       const clickedInsideEditableField =
         target === trackingInput ||
         target === scanInput ||
+        target === typeSelect ||
+        target === partySelect ||
         (target instanceof HTMLInputElement && target.dataset.field) ||
         target.closest?.("[data-delete-index]") ||
         target.closest?.(".toast") ||
-        target.closest?.(".home-button");
-
+        target.closest?.(".home-button") ||
+        target.closest?.("select");
+    
       if (!clickedInsideEditableField && parcelStarted) {
         focusScanner();
       }
