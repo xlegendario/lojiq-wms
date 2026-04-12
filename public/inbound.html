@@ -70,6 +70,21 @@
       flex: 0 0 22px;
     }
 
+    .summary-type-row {
+      margin-bottom: 16px;
+    }
+    
+    .summary-type-label {
+      font-size: 14px;
+      font-weight: 800;
+      color: var(--text);
+      margin-bottom: 8px;
+    }
+    
+    .summary-type-select {
+      max-width: 280px;
+    }
+
     .wrap {
       max-width: 1150px;
       margin: 0 auto;
@@ -451,14 +466,6 @@
           autocomplete="off"
         />
         
-        <select id="typeSelect" class="input" required>
-          <option value="" selected disabled>Select Type</option>
-          <option value="Consignment">Consignment</option>
-          <option value="Forwarding">Forwarding</option>
-          <option value="Regular">Regular</option>
-          <option value="Unknown">Unknown</option>
-        </select>
-        
         <button class="button secondary" id="resetBtn">Reset</button>
 
         <div class="status-box">
@@ -481,16 +488,22 @@
             <div class="status-label">Total Items:</div>
             <div class="status-value" id="totalCount">0</div>
           </div>
-
-          <div class="status-item">
-            <div class="status-label">Type:</div>
-            <div class="status-value" id="typeDisplay">Unknown</div>
-          </div>
         </div>
       </div>
 
       <div class="card">
         <h2>SUMMARY</h2>
+
+        <div class="summary-type-row">
+          <div class="summary-type-label">Type</div>
+          <select id="typeSelect" class="input summary-type-select" required>
+            <option value="" selected disabled>Select Type</option>
+            <option value="Consignment">Consignment</option>
+            <option value="Forwarding">Forwarding</option>
+            <option value="Regular">Regular</option>
+            <option value="Unknown">Unknown</option>
+          </select>
+        </div>
 
         <div class="table-wrap">
           <table class="table">
@@ -540,7 +553,6 @@
 
     const statusText = document.getElementById("statusText");
     const trackingDisplay = document.getElementById("trackingDisplay");
-    const typeDisplay = document.getElementById("typeDisplay");
     const uniqueCount = document.getElementById("uniqueCount");
     const totalCount = document.getElementById("totalCount");
     const itemsTableBody = document.getElementById("itemsTableBody");
@@ -548,7 +560,7 @@
 
     let parcelStarted = false;
     let trackingNumber = "";
-    let parcelType = "Unknown";
+    let parcelType = "";
     let items = [];
 
     function escapeHtml(value) {
@@ -610,7 +622,6 @@
         : "Waiting for tracking scan";
     
       trackingDisplay.textContent = trackingNumber || "—";
-      typeDisplay.textContent = parcelType || "Unknown";
       uniqueCount.textContent = items.length;
       totalCount.textContent = items.reduce((sum, item) => sum + item.quantity, 0);
     }
@@ -752,10 +763,10 @@
     function resetParcel() {
       parcelStarted = false;
       trackingNumber = "";
-      parcelType = "Unknown";
+      parcelType = "";
       items = [];
       trackingInput.value = "";
-      typeSelect.value = "Unknown";
+      typeSelect.value = "";
       scanInput.value = "";
       renderTable();
       trackingInput.focus();
