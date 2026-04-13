@@ -22,6 +22,7 @@ const {
   AIRTABLE_SELLERS_TABLE = "Sellers Database",
   AIRTABLE_MERCHANTS_TABLE = "Merchants",
   AIRTABLE_INVENTORY_UNITS_TABLE = "Inventory Units",
+  AIRTABLE_EXTERNAL_SALES_LOG_TABLE = "External Sales Log",
   BUYERS_AIRTABLE_BASE_ID,
   BUYERS_AIRTABLE_TABLE = "Buyers Database",
   BUYERS_AIRTABLE_TOKEN
@@ -607,7 +608,8 @@ app.post("/api/outbound-lookup-gtin", async (req, res) => {
       size,
       available_quantity: records.length,
       unit_price: averagePrice,
-      total_available_price: totalPrice
+      total_available_price: totalPrice,
+      inventory_unit_ids: records.map((record) => record.id)
     });
   } catch (error) {
     console.error("outbound-lookup-gtin failed:", error);
@@ -666,12 +668,64 @@ app.post("/api/outbound-search-sku-size", async (req, res) => {
       size,
       available_quantity: records.length,
       unit_price: averagePrice,
-      total_available_price: totalPrice
+      total_available_price: totalPrice,
+      inventory_unit_ids: records.map((record) => record.id)
     });
   } catch (error) {
     console.error("outbound-search-sku-size failed:", error);
     return res.status(500).json({
       error: "Failed to search outbound SKU/Size",
+      details: error.message
+    });
+  }
+});
+
+app.post("/api/submit-outbound", async (req, res) => {
+  try {
+    const mode = asText(req.body?.mode);
+    const buyerId = asText(req.body?.buyer_id);
+    const items = Array.isArray(req.body?.items) ? req.body.items : [];
+
+    if (mode !== "Selling") {
+      return res.status(400).json({ error: "Only Selling is supported right now" });
+    }
+
+    if (!buyerId) {
+      return res.status(400).json({ error: "Missing buyer_id" });
+    }
+
+    if (!items.length) {
+      return res.status(400).json({ error: "No items submitted" });
+    }
+
+    const linkedInventoryUnitIds = items.flatMap((item) => {
+      const quantity = Number(item?.quantity);
+      const inventoryUnitIds = Array.isArray(item?.inventory_unit_ids) ? item.inventory_unit_ids : [];
+
+      if (!Number.isInteger(quantity) || quantity < 1) {
+        return [];
+      }
+
+      return inventoryUnitIds.slice(0, quantity);
+    });
+
+    if (!linkedInventoryUnitIds.length) {
+      return res.status(400).json({ error: "No Inventory Unit record IDs found to submit" });
+    }
+
+    const createdRecord = await airtable(AIRTABLE_EXTERNAL_SALES_LOG_TABLE).create({
+      "Linked Invenotry Units": linkedInventoryUnitIds
+    });
+
+    return res.status(200).json({
+      ok: true,
+      id: createdRecord.id,
+      linked_inventory_units_count: linkedInventoryUnitIds.length
+    });
+  } catch (error) {
+    console.error("submit-outbound failed:", error);
+    return res.status(500).json({
+      error: "Failed to submit outbound",
       details: error.message
     });
   }
