@@ -23,8 +23,9 @@ const {
   AIRTABLE_MERCHANTS_TABLE = "Merchants",
   AIRTABLE_INVENTORY_UNITS_TABLE = "Inventory Units",
   AIRTABLE_EXTERNAL_SALES_LOG_TABLE = "External Sales Log",
+  AIRTABLE_BUYERS_TABLE = "Buyers Database", // Main Airtable
   BUYERS_AIRTABLE_BASE_ID,
-  BUYERS_AIRTABLE_TABLE = "Buyers Database",
+  BUYERS_AIRTABLE_TABLE = "Buyer Database",  // External Airtable
   BUYERS_AIRTABLE_TOKEN
 } = process.env;
 
@@ -53,6 +54,20 @@ function asText(value) {
 
 function escapeFormulaValue(value) {
   return asText(value).replace(/'/g, "\\'");
+}
+
+async function findMainBuyerRecordByBuyerId(buyerIdValue) {
+  const safeBuyerId = escapeFormulaValue(buyerIdValue);
+
+  const records = await airtable(AIRTABLE_BUYERS_TABLE)
+    .select({
+      fields: ["Buyer ID"],
+      filterByFormula: `TRIM({Buyer ID} & '') = '${safeBuyerId}'`,
+      maxRecords: 1
+    })
+    .firstPage();
+
+  return records[0] || null;
 }
 
 async function findStockLevelByGTIN(gtin) {
@@ -509,7 +524,8 @@ app.post("/api/outbound-buyers", async (req, res) => {
       });
     }
 
-    const created = await buyersBase(BUYERS_AIRTABLE_TABLE).create({
+    // 1. Create buyer in external Airtable
+    const createdExternal = await buyersBase(BUYERS_AIRTABLE_TABLE).create({
       "Full Name": fullName,
       "Company Name": companyName || null,
       "VAT ID": vatId || null,
@@ -520,6 +536,51 @@ app.post("/api/outbound-buyers", async (req, res) => {
       "City": city,
       "Country": country
     });
+    
+    // 2. Reload to obtain formula fields
+    const externalRecords = await buyersBase(BUYERS_AIRTABLE_TABLE)
+      .select({
+        fields: [
+          "Buyer ID",
+          "Country Code",
+          "Full Name",
+          "Company Name",
+          "VAT ID",
+          "Email",
+          "Address",
+          "Address line 2",
+          "Zipcode",
+          "City",
+          "Country"
+        ],
+        filterByFormula: `RECORD_ID() = '${createdExternal.id}'`,
+        maxRecords: 1
+      })
+      .firstPage();
+    
+    const created = externalRecords[0];
+    
+    const buyerIdValue = asText(created.fields["Buyer ID"]);
+    const countryCodeValue = asText(created.fields["Country Code"]);
+    
+    // 3. Create buyer in main Airtable if not exists
+    const existingMainBuyer = await findMainBuyerRecordByBuyerId(buyerIdValue);
+    
+    if (!existingMainBuyer) {
+      await airtable(AIRTABLE_BUYERS_TABLE).create({
+        "Buyer ID": buyerIdValue,
+        "Country Code": countryCodeValue || null,
+        "Full Name": asText(created.fields["Full Name"]),
+        "Company Name": asText(created.fields["Company Name"]) || null,
+        "VAT ID": asText(created.fields["VAT ID"]) || null,
+        "Email": asText(created.fields["Email"]),
+        "Address": asText(created.fields["Address"]),
+        "Address line 2": asText(created.fields["Address line 2"]) || null,
+        "Zipcode": asText(created.fields["Zipcode"]),
+        "City": asText(created.fields["City"]),
+        "Country": asText(created.fields["Country"])
+      });
+    }
 
     return res.status(200).json({
       ok: true,
@@ -716,14 +777,38 @@ app.post("/api/submit-outbound", async (req, res) => {
       return res.status(400).json({ error: "No Inventory Unit record IDs found to submit" });
     }
 
+    // Fetch Buyer ID from external Airtable
+    const externalBuyerRecords = await buyersBase(BUYERS_AIRTABLE_TABLE)
+      .select({
+        fields: ["Buyer ID"],
+        filterByFormula: `RECORD_ID() = '${escapeFormulaValue(buyerId)}'`,
+        maxRecords: 1
+      })
+      .firstPage();
+    
+    const externalBuyer = externalBuyerRecords[0];
+    if (!externalBuyer) {
+      return res.status(400).json({ error: "Selected buyer not found" });
+    }
+    
+    const buyerIdValue = asText(externalBuyer.fields["Buyer ID"]);
+    
+    // Find corresponding buyer in main Airtable
+    const mainBuyerRecord = await findMainBuyerRecordByBuyerId(buyerIdValue);
+    if (!mainBuyerRecord) {
+      return res.status(400).json({
+        error: `No matching buyer found in main Airtable for Buyer ID ${buyerIdValue}`
+      });
+    }
+    
     const createdRecord = await airtable(AIRTABLE_EXTERNAL_SALES_LOG_TABLE).create({
+      "Buyer ID": [mainBuyerRecord.id],
       "Linked Inventory Units": linkedInventoryUnitIds,
       "Total Selling Price": totalSellingPrice,
       "Shipping Costs": shippingCosts,
       "Shipping Labels": shippingLabels,
       "Sale Date": new Date().toISOString().split("T")[0]
     });
-
     return res.status(200).json({
       ok: true,
       id: createdRecord.id,
