@@ -156,6 +156,39 @@ async function getBuyerOptions() {
     }))
     .filter((option) => option.label);
 }
+
+async function getBuyerCountryOptions() {
+  const token = BUYERS_AIRTABLE_TOKEN || AIRTABLE_TOKEN;
+
+  const response = await fetch(`https://api.airtable.com/v0/meta/bases/${BUYERS_AIRTABLE_BASE_ID}/tables`, {
+    headers: {
+      Authorization: `Bearer ${token}`
+    }
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data?.error?.message || "Failed to load buyer country options");
+  }
+
+  const table = (data.tables || []).find((entry) => entry.name === BUYERS_AIRTABLE_TABLE);
+  if (!table) {
+    throw new Error(`Table "${BUYERS_AIRTABLE_TABLE}" not found in buyers base`);
+  }
+
+  const countryField = (table.fields || []).find((field) => field.name === "Country");
+  if (!countryField) {
+    throw new Error('Field "Country" not found in buyers table');
+  }
+
+  const choices = countryField.options?.choices || [];
+
+  return choices
+    .map((choice) => asText(choice.name))
+    .filter(Boolean);
+}
+
 app.get("/", (_req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
@@ -440,6 +473,23 @@ app.get("/api/outbound-buyers", async (_req, res) => {
   }
 });
 
+app.get("/api/outbound-buyer-country-options", async (_req, res) => {
+  try {
+    const options = await getBuyerCountryOptions();
+
+    return res.status(200).json({
+      ok: true,
+      options
+    });
+  } catch (error) {
+    console.error("outbound-buyer-country-options failed:", error);
+    return res.status(500).json({
+      error: "Failed to load buyer country options",
+      details: error.message
+    });
+  }
+});
+
 app.post("/api/outbound-buyers", async (req, res) => {
   try {
     const fullName = asText(req.body?.full_name);
@@ -452,7 +502,7 @@ app.post("/api/outbound-buyers", async (req, res) => {
     const city = asText(req.body?.city);
     const country = asText(req.body?.country);
 
-    if (!fullName || !email || !address || !zipcode || !city || !country) {
+    if (!fullName || !email || !address || !addressLine2 || !zipcode || !city || !country) {
       return res.status(400).json({
         error: "Missing required buyer fields"
       });
