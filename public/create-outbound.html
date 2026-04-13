@@ -1002,6 +1002,9 @@
           body: JSON.stringify({
             mode: outboundMode,
             buyer_id: buyerSelect.value,
+            total_selling_price: Number(totalSellingPriceInput.value) || 0,
+            shipping_costs: Number(shippingCostsInput.value) || 0,
+            shipping_labels: Number(shippingLabelsInput.value) || 0,
             items: items.map((item) => ({
               quantity: item.quantity,
               inventory_unit_ids: item.inventoryUnitIds
