@@ -480,17 +480,17 @@
         
             <div class="summary-line">
               <span class="summary-line-label">Shipping Labels:</span>
-              <input id="shippingLabelsInput" class="input summary-line-input" type="number" min="1" />
+              <input id="shippingLabelsInput" class="input summary-line-input" type="number" min="0" step="1" />
             </div>
         
             <div class="summary-line">
               <span class="summary-line-label">Shipping Costs:</span>
-              <input id="shippingCostsInput" class="input summary-line-input" type="number" min="0" step="0.01" />
+              <input id="shippingCostsInput" class="input summary-line-input" type="number" min="0" step="1" />
             </div>
         
             <div class="summary-line">
               <span class="summary-line-label">Total Selling Price:</span>
-              <input id="totalSellingPriceInput" class="input summary-line-input" type="number" min="0" step="0.01" />
+              <input id="totalSellingPriceInput" class="input summary-line-input" type="number" min="0" step="0.5" />
             </div>
         
             <div class="summary-line result-line">
@@ -980,7 +980,13 @@
         return;
       }
 
-      if (!shippingLabelsInput.value || Number(shippingLabelsInput.value) < 1) {
+      const shippingLabelsValue = Number(shippingLabelsInput.value);
+      
+      if (
+        shippingLabelsInput.value === "" ||
+        Number.isNaN(shippingLabelsValue) ||
+        shippingLabelsValue < 0
+      ) {
         showToast("Please fill Shipping Labels Needed.", "warning", "Warning");
         return;
       }
