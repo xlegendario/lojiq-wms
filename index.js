@@ -20,7 +20,10 @@ const {
   AIRTABLE_STOCK_LEVELS_TABLE = "Stock Levels",
   AIRTABLE_INCOMING_STOCK_TABLE = "Incoming Stock",
   AIRTABLE_SELLERS_TABLE = "Sellers Database",
-  AIRTABLE_MERCHANTS_TABLE = "Merchants"
+  AIRTABLE_MERCHANTS_TABLE = "Merchants",
+  AIRTABLE_INVENTORY_UNITS_TABLE = "Inventory Units",
+  AIRTABLE_BUYERS_BASE_ID,
+  AIRTABLE_BUYERS_TABLE = "Buyers Database"
 } = process.env;
 
 if (!AIRTABLE_TOKEN) {
@@ -32,6 +35,12 @@ if (!AIRTABLE_BASE_ID) {
 }
 
 const airtable = new Airtable({ apiKey: AIRTABLE_TOKEN }).base(AIRTABLE_BASE_ID);
+
+if (!AIRTABLE_BUYERS_BASE_ID) {
+  throw new Error("Missing AIRTABLE_BUYERS_BASE_ID environment variable");
+}
+
+const buyersBase = new Airtable({ apiKey: AIRTABLE_TOKEN }).base(AIRTABLE_BUYERS_BASE_ID);
 
 function asText(value) {
   if (value === null || value === undefined) return "";
@@ -106,6 +115,22 @@ async function getInboundPartyOptions() {
     .filter((option) => option.label);
 
   return [...sellerOptions, ...merchantOptions];
+}
+
+async function getBuyerOptions() {
+  const records = await buyersBase(AIRTABLE_BUYERS_TABLE)
+    .select({
+      fields: ["Full Name"],
+      sort: [{ field: "Full Name", direction: "asc" }]
+    })
+    .all();
+
+  return records
+    .map((record) => ({
+      id: record.id,
+      label: asText(record.fields["Full Name"])
+    }))
+    .filter((option) => option.label);
 }
 
 app.get("/", (_req, res) => {
@@ -370,6 +395,179 @@ app.post("/api/receive-parcel", async (req, res) => {
     console.error(error);
     res.status(500).json({
       error: "Failed to process parcel",
+      details: error.message
+    });
+  }
+});
+
+app.get("/api/outbound-buyers", async (_req, res) => {
+  try {
+    const options = await getBuyerOptions();
+
+    return res.status(200).json({
+      ok: true,
+      options
+    });
+  } catch (error) {
+    console.error("outbound-buyers failed:", error);
+    return res.status(500).json({
+      error: "Failed to load buyers",
+      details: error.message
+    });
+  }
+});
+
+app.post("/api/outbound-buyers", async (req, res) => {
+  try {
+    const fullName = asText(req.body?.full_name);
+
+    if (!fullName) {
+      return res.status(400).json({ error: "Missing full_name" });
+    }
+
+    const created = await buyersBase(AIRTABLE_BUYERS_TABLE).create({
+      "Full Name": fullName
+    });
+
+    return res.status(200).json({
+      ok: true,
+      id: created.id,
+      label: asText(created.fields["Full Name"])
+    });
+  } catch (error) {
+    console.error("create outbound buyer failed:", error);
+    return res.status(500).json({
+      error: "Failed to create buyer",
+      details: error.message
+    });
+  }
+});
+
+app.post("/api/outbound-lookup-gtin", async (req, res) => {
+  try {
+    const gtin = asText(req.body?.gtin);
+
+    if (!gtin) {
+      return res.status(400).json({ error: "Missing gtin" });
+    }
+
+    const safeGtin = escapeFormulaValue(gtin);
+
+    const records = await airtable(AIRTABLE_INVENTORY_UNITS_TABLE)
+      .select({
+        filterByFormula: `AND(
+          TRIM({Product GTIN} & '') = '${safeGtin}',
+          {Availability Status} = 'Available'
+        )`
+      })
+      .all();
+
+    if (!records.length) {
+      const anyMatch = await airtable(AIRTABLE_INVENTORY_UNITS_TABLE)
+        .select({
+          filterByFormula: `TRIM({Product GTIN} & '') = '${safeGtin}'`,
+          maxRecords: 1
+        })
+        .firstPage();
+
+      if (anyMatch.length > 0) {
+        return res.status(200).json({
+          found: false,
+          reason: "no_available_items"
+        });
+      }
+
+      return res.status(200).json({
+        found: false,
+        reason: "unknown_gtin"
+      });
+    }
+
+    const first = records[0];
+    const productName = asText(first.fields["Product Name"]);
+    const sku = asText(first.fields["SKU"]);
+    const size = asText(first.fields["Size"]);
+
+    const purchasePrices = records
+      .map((r) => Number(r.fields["Purchase Price"]))
+      .filter((n) => Number.isFinite(n));
+
+    const totalPrice = purchasePrices.reduce((sum, n) => sum + n, 0);
+    const averagePrice = purchasePrices.length ? totalPrice / purchasePrices.length : 0;
+
+    return res.status(200).json({
+      found: true,
+      gtin,
+      product_name: productName,
+      sku,
+      size,
+      available_quantity: records.length,
+      unit_price: averagePrice,
+      total_available_price: totalPrice
+    });
+  } catch (error) {
+    console.error("outbound-lookup-gtin failed:", error);
+    return res.status(500).json({
+      error: "Failed to lookup outbound GTIN",
+      details: error.message
+    });
+  }
+});
+
+app.post("/api/outbound-search-sku-size", async (req, res) => {
+  try {
+    const sku = asText(req.body?.sku).toUpperCase();
+    const size = asText(req.body?.size);
+
+    if (!sku || !size) {
+      return res.status(400).json({ error: "Missing sku or size" });
+    }
+
+    const safeSku = escapeFormulaValue(sku);
+    const safeSize = escapeFormulaValue(size);
+
+    const records = await airtable(AIRTABLE_INVENTORY_UNITS_TABLE)
+      .select({
+        filterByFormula: `AND(
+          UPPER(TRIM({SKU} & '')) = '${safeSku}',
+          TRIM({Size} & '') = '${safeSize}',
+          {Availability Status} = 'Available'
+        )`
+      })
+      .all();
+
+    if (!records.length) {
+      return res.status(200).json({
+        found: false,
+        reason: "not_found"
+      });
+    }
+
+    const first = records[0];
+    const gtin = asText(first.fields["Product GTIN"]);
+    const productName = asText(first.fields["Product Name"]);
+
+    const purchasePrices = records
+      .map((r) => Number(r.fields["Purchase Price"]))
+      .filter((n) => Number.isFinite(n));
+
+    const totalPrice = purchasePrices.reduce((sum, n) => sum + n, 0);
+    const averagePrice = purchasePrices.length ? totalPrice / purchasePrices.length : 0;
+
+    return res.status(200).json({
+      found: true,
+      gtin,
+      product_name: productName,
+      sku,
+      size,
+      available_quantity: records.length,
+      unit_price: averagePrice,
+      total_available_price: totalPrice
+    });
+  } catch (error) {
+    console.error("outbound-search-sku-size failed:", error);
+    return res.status(500).json({
+      error: "Failed to search outbound SKU/Size",
       details: error.message
     });
   }
