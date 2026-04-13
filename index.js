@@ -52,6 +52,10 @@ function asText(value) {
   return String(value).trim();
 }
 
+function escapeFormulaValue(value) {
+  return asText(value).replace(/'/g, "\\'");
+}
+
 async function updateInventoryUnitsToReserved(recordIds) {
   const uniqueIds = [...new Set((recordIds || []).filter(Boolean))];
 
