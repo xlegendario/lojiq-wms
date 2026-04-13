@@ -502,7 +502,7 @@ app.post("/api/outbound-buyers", async (req, res) => {
     const city = asText(req.body?.city);
     const country = asText(req.body?.country);
 
-    if (!fullName || !email || !address || !addressLine2 || !zipcode || !city || !country) {
+    if (!fullName || !email || !address || !zipcode || !city || !country) {
       return res.status(400).json({
         error: "Missing required buyer fields"
       });
