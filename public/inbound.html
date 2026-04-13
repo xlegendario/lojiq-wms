@@ -153,6 +153,13 @@
       box-shadow: 0 0 0 3px rgba(47,128,237,0.15);
     }
 
+    .qty-input {
+      width: 90px;
+      text-align: center;
+      font-weight: 700;
+      color: var(--primary-soft);
+    }
+  
     .button {
       width: 100%;
       cursor: pointer;
@@ -675,7 +682,17 @@
               data-field="size"
             />
           </td>
-          <td class="qty">${item.quantity}</td>
+          <td>
+            <input
+              type="number"
+              min="1"
+              step="1"
+              value="${item.quantity}"
+              data-index="${index}"
+              data-field="quantity"
+              class="qty-input"
+            />
+          </td>
           <td>
             <button class="delete-btn" type="button" data-delete-index="${index}" aria-label="Delete row">
               <svg class="delete-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
@@ -957,14 +974,30 @@
     itemsTableBody.addEventListener("input", (event) => {
       const target = event.target;
       if (!(target instanceof HTMLInputElement)) return;
-
+    
       const index = Number(target.dataset.index);
       const field = target.dataset.field;
-
+    
       if (!Number.isInteger(index) || !items[index]) return;
-      if (!["sku", "size"].includes(field)) return;
-
-      items[index][field] = target.value;
+    
+      if (field === "sku" || field === "size") {
+        items[index][field] = target.value;
+        return;
+      }
+    
+      if (field === "quantity") {
+        const parsed = Number(target.value);
+    
+        if (!Number.isFinite(parsed) || parsed < 1) {
+          items[index].quantity = 1;
+          target.value = "1";
+        } else {
+          items[index].quantity = Math.floor(parsed);
+          target.value = String(items[index].quantity);
+        }
+    
+        updateStatusPanel();
+      }
     });
 
     itemsTableBody.addEventListener("click", (event) => {
