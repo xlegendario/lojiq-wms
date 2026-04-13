@@ -22,8 +22,9 @@ const {
   AIRTABLE_SELLERS_TABLE = "Sellers Database",
   AIRTABLE_MERCHANTS_TABLE = "Merchants",
   AIRTABLE_INVENTORY_UNITS_TABLE = "Inventory Units",
-  AIRTABLE_BUYERS_BASE_ID,
-  AIRTABLE_BUYERS_TABLE = "Buyers Database"
+  BUYERS_AIRTABLE_BASE_ID,
+  BUYERS_AIRTABLE_TABLE = "Buyers Database",
+  BUYERS_AIRTABLE_TOKEN
 } = process.env;
 
 if (!AIRTABLE_TOKEN) {
@@ -36,11 +37,13 @@ if (!AIRTABLE_BASE_ID) {
 
 const airtable = new Airtable({ apiKey: AIRTABLE_TOKEN }).base(AIRTABLE_BASE_ID);
 
-if (!AIRTABLE_BUYERS_BASE_ID) {
-  throw new Error("Missing AIRTABLE_BUYERS_BASE_ID environment variable");
+if (!BUYERS_AIRTABLE_BASE_ID) {
+  throw new Error("Missing BUYERS_AIRTABLE_BASE_ID environment variable");
 }
 
-const buyersBase = new Airtable({ apiKey: AIRTABLE_TOKEN }).base(AIRTABLE_BUYERS_BASE_ID);
+const buyersBase = new Airtable({
+  apiKey: BUYERS_AIRTABLE_TOKEN || AIRTABLE_TOKEN
+}).base(BUYERS_AIRTABLE_BASE_ID);
 
 function asText(value) {
   if (value === null || value === undefined) return "";
@@ -118,7 +121,7 @@ async function getInboundPartyOptions() {
 }
 
 async function getBuyerOptions() {
-  const records = await buyersBase(AIRTABLE_BUYERS_TABLE)
+  const records = await buyersBase(BUYERS_AIRTABLE_TABLE)
     .select({
       fields: ["Full Name"],
       sort: [{ field: "Full Name", direction: "asc" }]
@@ -425,7 +428,7 @@ app.post("/api/outbound-buyers", async (req, res) => {
       return res.status(400).json({ error: "Missing full_name" });
     }
 
-    const created = await buyersBase(AIRTABLE_BUYERS_TABLE).create({
+    const created = await buyersBase(BUYERS_AIRTABLE_TABLE).create({
       "Full Name": fullName
     });
 
