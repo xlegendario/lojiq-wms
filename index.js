@@ -350,22 +350,34 @@ app.post("/api/submit-inbound", async (req, res) => {
       const size = asText(item.size);
       const quantity = Number(item.quantity) || 0;
 
-      if (!gtin) {
-        throw new Error("One or more items are missing Product GTIN");
+      if (!gtin && (!sku || !size)) {
+        throw new Error("One or more items are missing both Product GTIN and SKU/Size");
       }
 
       if (quantity <= 0) {
-        throw new Error(`Invalid quantity for GTIN ${gtin}`);
+        throw new Error(`Invalid quantity for item ${gtin || `${sku} / ${size}`}`);
       }
 
       const safeGtin = escapeFormulaValue(gtin);
+      const safeSku = escapeFormulaValue(sku);
+      const safeSize = escapeFormulaValue(size);
 
       const existingRecords = await airtable(AIRTABLE_INCOMING_STOCK_TABLE)
         .select({
-          filterByFormula: `AND(
-            TRIM({Tracking Number} & '') = '${safeTracking}',
-            TRIM({Product GTIN} & '') = '${safeGtin}'
-          )`,
+          filterByFormula: gtin
+            ? `AND(
+                TRIM({Tracking Number} & '') = '${safeTracking}',
+                TRIM({Product GTIN} & '') = '${safeGtin}'
+              )`
+            : `AND(
+                TRIM({Tracking Number} & '') = '${safeTracking}',
+                OR(
+                  {Product GTIN} = BLANK(),
+                  TRIM({Product GTIN} & '') = ''
+                ),
+                TRIM({SKU} & '') = '${safeSku}',
+                TRIM({Size} & '') = '${safeSize}'
+              )`,
           maxRecords: 1
         })
         .firstPage();
@@ -380,7 +392,7 @@ app.post("/api/submit-inbound", async (req, res) => {
       if (existingRecord) {
         await airtable(AIRTABLE_INCOMING_STOCK_TABLE).update(existingRecord.id, {
           "Tracking Number": trackingNumber,
-          "Product GTIN": gtin,
+          "Product GTIN": gtin || null,
           "SKU": sku,
           "Size": size,
           "Quantity": quantity,
@@ -399,7 +411,7 @@ app.post("/api/submit-inbound", async (req, res) => {
       if (placeholderRecord) {
         await airtable(AIRTABLE_INCOMING_STOCK_TABLE).update(placeholderRecord.id, {
           "Tracking Number": trackingNumber,
-          "Product GTIN": gtin,
+          "Product GTIN": gtin || null,
           "SKU": sku,
           "Size": size,
           "Quantity": quantity,
@@ -418,7 +430,7 @@ app.post("/api/submit-inbound", async (req, res) => {
 
       await airtable(AIRTABLE_INCOMING_STOCK_TABLE).create({
         "Tracking Number": trackingNumber,
-        "Product GTIN": gtin,
+        "Product GTIN": gtin || null,
         "SKU": sku,
         "Size": size,
         "Quantity": quantity,
