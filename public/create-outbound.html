@@ -188,8 +188,8 @@
 
     .manual-grid {
       display: grid;
-      grid-template-columns: minmax(260px, 2fr) minmax(120px, 0.8fr) auto;
-      gap: 12px;
+      grid-template-columns: 1.3fr 0.7fr auto;
+      gap: 10px;
       align-items: end;
     }
 
@@ -234,33 +234,52 @@
 
     .summary-bottom {
       margin-top: 16px;
-      display: grid;
-      gap: 16px;
     }
-
-    .summary-fields-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 16px;
-    }
-
-    .summary-recap {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 16px;
-    }
-
-    .summary-value {
-      width: 100%;
-      border-radius: 12px;
+    
+    .summary-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      padding: 16px;
+      border-radius: 14px;
       border: 1px solid var(--border);
       background: rgba(7,17,31,0.35);
-      color: var(--text);
-      padding: 14px;
-      font-size: 15px;
-      min-height: 49px;
+    }
+    
+    .summary-line {
       display: flex;
+      justify-content: space-between;
       align-items: center;
+      gap: 16px;
+    }
+    
+    .summary-line-label {
+      font-size: 15px;
+      font-weight: 800;
+      color: var(--text);
+    }
+    
+    .summary-line-value {
+      font-size: 18px;
+      font-weight: 800;
+      color: var(--text);
+    }
+    
+    .summary-line-input {
+      max-width: 220px;
+    }
+    
+    .result-line {
+      padding-top: 10px;
+      border-top: 1px solid rgba(22,50,82,0.85);
+    }
+    
+    .result-positive {
+      color: #16B364;
+    }
+    
+    .result-negative {
+      color: #F04438;
     }
 
     .scan-hidden {
@@ -372,7 +391,6 @@
 
           <div class="button-row">
             <button id="addBuyerBtn" class="button secondary">+ Add New Buyer</button>
-            <button id="refocusBtn" class="button secondary" type="button">Refocus</button>
           </div>
 
           <div id="buyerForm" class="buyer-form">
@@ -383,7 +401,7 @@
               <input id="buyerVatIdInput" class="input" placeholder="VAT ID" />
               <input id="buyerEmailInput" class="input" placeholder="Email *" />
               <input id="buyerAddressInput" class="input" placeholder="Address *" />
-              <input id="buyerAddressLine2Input" class="input" placeholder="Address Line 2 *" />
+              <input id="buyerAddressLine2Input" class="input" placeholder="Address Line 2" />
               <input id="buyerZipcodeInput" class="input" placeholder="Zipcode *" />
               <input id="buyerCityInput" class="input" placeholder="City *" />
               <select id="buyerCountryInput">
@@ -440,30 +458,36 @@
         </div>
 
         <div class="summary-bottom">
-          <div class="summary-fields-grid">
-            <div>
-              <div class="field-label">Shipping Labels Needed</div>
-              <input id="shippingLabelsInput" class="input" type="number" min="1" value="1" />
+          <div class="summary-stack">
+            <div class="summary-line">
+              <span class="summary-line-label">Items Total:</span>
+              <span id="itemsTotalValue" class="summary-line-value">€0.00</span>
             </div>
-            <div>
-              <div class="field-label">Total Selling Price</div>
-              <input id="totalSellingPriceInput" class="input" type="number" min="0" step="0.01" />
+        
+            <div class="summary-line">
+              <span class="summary-line-label">Shipping Labels:</span>
+              <input id="shippingLabelsInput" class="input summary-line-input" type="number" min="1" />
             </div>
-          </div>
-
-          <div class="summary-recap">
-            <div>
-              <div class="field-label">Items Total</div>
-              <div id="itemsTotalValue" class="summary-value">0.00</div>
+        
+            <div class="summary-line">
+              <span class="summary-line-label">Shipping Costs:</span>
+              <input id="shippingCostsInput" class="input summary-line-input" type="number" min="0" step="0.01" />
             </div>
-            <div>
-              <div class="field-label">Shipping Costs</div>
-              <input id="shippingCostsInput" class="input" type="number" min="0" step="0.01" value="0" />
+        
+            <div class="summary-line">
+              <span class="summary-line-label">Total Selling Price:</span>
+              <input id="totalSellingPriceInput" class="input summary-line-input" type="number" min="0" step="0.01" />
+            </div>
+        
+            <div class="summary-line result-line">
+              <span class="summary-line-label">Result:</span>
+              <span id="resultValue" class="summary-line-value">€0.00</span>
             </div>
           </div>
         </div>
 
         <div class="actions">
+          <button id="refocusBtn" class="button secondary" type="button">Refocus</button>
           <button id="submitBtn" class="button">Submit</button>
         </div>
       </div>
@@ -500,6 +524,7 @@
     const totalSellingPriceInput = document.getElementById("totalSellingPriceInput");
     const shippingCostsInput = document.getElementById("shippingCostsInput");
     const itemsTotalValue = document.getElementById("itemsTotalValue");
+    const resultValue = document.getElementById("resultValue");
     const toastStack = document.getElementById("toastStack");
 
     let outboundMode = "Selling";
@@ -647,7 +672,23 @@
     }
 
     function renderSummaryTotals() {
-      itemsTotalValue.textContent = getItemsTotal().toFixed(2);
+      const itemsTotal = getItemsTotal();
+      const shippingCosts = Number(shippingCostsInput.value) || 0;
+      const totalSellingPrice = Number(totalSellingPriceInput.value) || 0;
+      const result = totalSellingPrice - itemsTotal - shippingCosts;
+    
+      itemsTotalValue.textContent = `€${itemsTotal.toFixed(2)}`;
+    
+      if (result > 0) {
+        resultValue.textContent = `+€${result.toFixed(2)}`;
+        resultValue.className = "summary-line-value result-positive";
+      } else if (result < 0) {
+        resultValue.textContent = `-€${Math.abs(result).toFixed(2)}`;
+        resultValue.className = "summary-line-value result-negative";
+      } else {
+        resultValue.textContent = `€0.00`;
+        resultValue.className = "summary-line-value";
+      }
     }
 
     function renderTable() {
@@ -809,9 +850,9 @@
       scanInput.value = "";
       manualSkuInput.value = "";
       manualSizeInput.value = "";
-      shippingLabelsInput.value = "1";
+      shippingLabelsInput.value = "";
       totalSellingPriceInput.value = "";
-      shippingCostsInput.value = "0";
+      shippingCostsInput.value = "";
       buyerSelect.value = "";
       buyerDetails.className = "buyer-details";
       buyerDetails.innerHTML = "";
@@ -844,7 +885,6 @@
 
     refocusBtn.addEventListener("click", () => {
       scanInput.focus();
-      showToast("Scanner refocused.", "success", "Success");
     });
 
     buyerSelect.addEventListener("change", () => {
@@ -901,6 +941,10 @@
       renderTable();
     });
 
+    shippingLabelsInput.addEventListener("input", renderSummaryTotals);
+    shippingCostsInput.addEventListener("input", renderSummaryTotals);
+    totalSellingPriceInput.addEventListener("input", renderSummaryTotals);
+
     submitBtn.addEventListener("click", () => {
       if (outboundMode !== "Selling") {
         showToast("Only Selling is built right now.", "warning", "Warning");
@@ -924,6 +968,11 @@
 
       if (!totalSellingPriceInput.value) {
         showToast("Please fill Total Selling Price.", "warning", "Warning");
+        return;
+      }
+
+      if (!shippingCostsInput.value) {
+        showToast("Please fill Shipping Costs.", "warning", "Warning");
         return;
       }
 
