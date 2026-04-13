@@ -193,6 +193,21 @@
       border: 1px solid var(--border);
     }
 
+    .manual-block {
+      margin-top: 18px;
+      padding: 16px;
+      border-radius: 14px;
+      border: 1px dashed rgba(102,179,255,0.35);
+      background: rgba(47,128,237,0.06);
+    }
+
+    .manual-grid {
+      display: grid;
+      grid-template-columns: minmax(220px, 1.3fr) minmax(120px, 0.7fr) auto;
+      gap: 10px;
+      align-items: end;
+    }
+
     .status-item {
       margin-bottom: 16px;
     }
@@ -481,6 +496,23 @@
         
         <button class="button secondary" id="resetBtn">Reset</button>
 
+        <div class="manual-block">
+          <div class="field-label">Manual Add</div>
+          <div class="manual-grid">
+            <div>
+              <div class="field-label">SKU</div>
+              <input id="manualSkuInput" class="input" />
+            </div>
+            <div>
+              <div class="field-label">Size</div>
+              <input id="manualSizeInput" class="input" />
+            </div>
+            <div>
+              <button id="manualAddBtn" class="button" type="button">+ Add</button>
+            </div>
+          </div>
+        </div>
+
         <div class="status-box">
           <div class="status-item">
             <div class="status-label">Status:</div>
@@ -570,17 +602,19 @@
     const trackingInput = document.getElementById("trackingInput");
     const typeSelect = document.getElementById("typeSelect");
     const partySelect = document.getElementById("partySelect");
-    const resetBtn = document.getElementById("resetBtn");
-    const submitBtn = document.getElementById("submitBtn");
-    const focusScannerBtn = document.getElementById("focusScannerBtn");
     const scanInput = document.getElementById("scanInput");
-
+    const resetBtn = document.getElementById("resetBtn");
+    const focusScannerBtn = document.getElementById("focusScannerBtn");
+    const submitBtn = document.getElementById("submitBtn");
+    const manualSkuInput = document.getElementById("manualSkuInput");
+    const manualSizeInput = document.getElementById("manualSizeInput");
+    const manualAddBtn = document.getElementById("manualAddBtn");
+    const toastStack = document.getElementById("toastStack");
     const statusText = document.getElementById("statusText");
     const trackingDisplay = document.getElementById("trackingDisplay");
     const uniqueCount = document.getElementById("uniqueCount");
     const totalCount = document.getElementById("totalCount");
     const itemsTableBody = document.getElementById("itemsTableBody");
-    const toastStack = document.getElementById("toastStack");
 
     let parcelStarted = false;
     let trackingNumber = "";
@@ -665,7 +699,7 @@
 
       itemsTableBody.innerHTML = items.map((item, index) => `
         <tr>
-          <td>${escapeHtml(item.gtin)}</td>
+          <td>${escapeHtml(item.gtin || "—")}</td>
           <td>
             <input
               value="${escapeHtml(item.sku)}"
@@ -776,6 +810,43 @@
       focusScanner();
     }
 
+    function handleManualAdd() {
+      if (!parcelStarted) {
+        showToast("Scan a parcel tracking number first.", "warning", "Warning");
+        return;
+      }
+
+      const sku = manualSkuInput.value.trim();
+      const size = manualSizeInput.value.trim();
+
+      if (!sku || !size) {
+        showToast("Please fill SKU and Size first.", "warning", "Warning");
+        return;
+      }
+
+      const existingItem = items.find(
+        (item) => !item.gtin.trim() && item.sku.trim() === sku && item.size.trim() === size
+      );
+
+      if (existingItem) {
+        existingItem.quantity += 1;
+        renderTable();
+      } else {
+        items.push({
+          gtin: "",
+          sku,
+          size,
+          quantity: 1
+        });
+        renderTable();
+      }
+
+      manualSkuInput.value = "";
+      manualSizeInput.value = "";
+      manualSkuInput.focus();
+      showToast(`Added ${sku} / ${size}.`, "success", "Success");
+    }
+
     async function loadInboundParties() {
       try {
         const response = await fetch("/api/inbound-parties");
@@ -834,6 +905,8 @@
       typeSelect.value = "";
       partySelect.value = "";
       scanInput.value = "";
+      manualSkuInput.value = "";
+      manualSizeInput.value = "";
       renderTable();
       trackingInput.focus();
     }
@@ -855,8 +928,12 @@
       }
       
       for (const item of items) {
-        if (!item.gtin.trim()) {
-          showToast("One item is missing Product GTIN.", "error", "Error");
+        const gtin = item.gtin.trim();
+        const sku = item.sku.trim();
+        const size = item.size.trim();
+
+        if (!gtin && (!sku || !size)) {
+          showToast("Each item must have either Product GTIN or SKU + Size.", "error", "Error");
           return;
         }
       }
@@ -932,6 +1009,8 @@
         typeSelect.value = "";
         partySelect.value = "";
         scanInput.value = "";
+        manualSkuInput.value = "";
+        manualSizeInput.value = "";
         renderTable();
         trackingInput.focus();
       } catch (error) {
@@ -945,6 +1024,19 @@
     resetBtn.addEventListener("click", resetParcel);
     focusScannerBtn.addEventListener("click", focusScanner);
     submitBtn.addEventListener("click", submitParcel);
+    manualAddBtn.addEventListener("click", handleManualAdd);
+
+    manualSkuInput.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      handleManualAdd();
+    });
+
+    manualSizeInput.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      handleManualAdd();
+    });
 
     trackingInput.addEventListener("keydown", (event) => {
       if (event.key === "Enter") {
@@ -1010,7 +1102,7 @@
       const removed = items[index];
       items.splice(index, 1);
       renderTable();
-      showToast(`Removed GTIN ${removed.gtin}.`, "success", "Success");
+      showToast(`Removed ${removed.gtin || `${removed.sku} / ${removed.size}`}.`, "success", "Success");
       focusScanner();
     });
 
