@@ -759,7 +759,8 @@
         size: data.size,
         availableQuantity: data.available_quantity,
         quantity: 1,
-        unitPrice: Number(data.unit_price) || 0
+        unitPrice: Number(data.unit_price) || 0,
+        inventoryUnitIds: Array.isArray(data.inventory_unit_ids) ? data.inventory_unit_ids : []
       });
 
       renderTable();
@@ -963,7 +964,7 @@
     shippingCostsInput.addEventListener("input", renderSummaryTotals);
     totalSellingPriceInput.addEventListener("input", renderSummaryTotals);
 
-    submitBtn.addEventListener("click", () => {
+    submitBtn.addEventListener("click", async () => {
       if (outboundMode !== "Selling") {
         showToast("Only Selling is built right now.", "warning", "Warning");
         return;
@@ -994,10 +995,32 @@
         return;
       }
 
-      showToast("Outbound created successfully.", "success", "Success");
-      resetPage();
-    });
+      try {
+        const response = await fetch("/api/submit-outbound", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            mode: outboundMode,
+            buyer_id: buyerSelect.value,
+            items: items.map((item) => ({
+              quantity: item.quantity,
+              inventory_unit_ids: item.inventoryUnitIds
+            }))
+          })
+        });
 
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.details || data.error || "Failed to submit outbound");
+        }
+
+        showToast("Outbound created successfully.", "success", "Success");
+        resetPage();
+      } catch (error) {
+        showToast(error.message, "error", "Error");
+      }
+    });
     renderTable();
 
     Promise.all([loadBuyers(), loadBuyerCountryOptions()])
