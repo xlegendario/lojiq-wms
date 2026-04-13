@@ -1,0 +1,682 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lojiq WMS - Create Outbound</title>
+  <style>
+    :root {
+      --bg: #07111F;
+      --panel: #0E2238;
+      --border: #163252;
+      --primary: #2F80ED;
+      --primary-soft: #66B3FF;
+      --text: #DCEBFF;
+      --muted: #8FAECC;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      background:
+        radial-gradient(circle at top, rgba(47,128,237,0.18), transparent 30%),
+        linear-gradient(180deg, #050D18 0%, var(--bg) 100%);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    .topbar {
+      position: absolute;
+      top: 28px;
+      left: 28px;
+    }
+
+    .home-button {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      padding: 16px 28px;
+      border-radius: 14px;
+      text-decoration: none;
+      font-weight: 700;
+      font-size: 18px;
+      color: #DCEBFF;
+      background: linear-gradient(135deg, #2F80ED, #66B3FF);
+      border: 1px solid rgba(102, 179, 255, 0.35);
+    }
+
+    .wrap {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 110px 20px 60px;
+    }
+
+    .page-header {
+      text-align: center;
+      margin-bottom: 34px;
+    }
+
+    .page-title {
+      margin: 0;
+      font-size: 56px;
+      font-weight: 800;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 380px 1fr;
+      gap: 24px;
+      align-items: start;
+    }
+
+    .card {
+      background: linear-gradient(180deg, rgba(16,41,68,0.95), rgba(14,34,56,0.95));
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 20px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.28);
+    }
+
+    .card h2 {
+      margin: 0 0 16px;
+      font-size: 24px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+
+    .input, select, .table input {
+      width: 100%;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: rgba(7,17,31,0.7);
+      color: var(--text);
+      padding: 14px;
+      font-size: 15px;
+      outline: none;
+    }
+
+    .button {
+      cursor: pointer;
+      border-radius: 12px;
+      border: none;
+      padding: 14px;
+      font-size: 15px;
+      font-weight: 700;
+      background: linear-gradient(135deg, var(--primary), var(--primary-soft));
+      color: white;
+    }
+
+    .button.secondary {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text);
+    }
+
+    .button-row {
+      display: flex;
+      gap: 12px;
+      margin-top: 12px;
+    }
+
+    .stack {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .summary-top {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    .field-label {
+      font-size: 14px;
+      font-weight: 800;
+      margin-bottom: 8px;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+      border-radius: 16px;
+      border: 1px solid var(--border);
+      background: rgba(7,17,31,0.35);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 1000px;
+    }
+
+    th, td {
+      padding: 14px 12px;
+      border-bottom: 1px solid rgba(22,50,82,0.85);
+      text-align: left;
+      vertical-align: middle;
+      font-size: 14px;
+    }
+
+    th {
+      color: var(--muted);
+      font-weight: 700;
+      background: rgba(7,17,31,0.5);
+    }
+
+    .empty {
+      text-align: center;
+      color: var(--muted);
+      padding: 40px 20px;
+    }
+
+    .actions {
+      margin-top: 18px;
+      display: flex;
+      justify-content: flex-end;
+      gap: 12px;
+    }
+
+    .manual-block {
+      margin-top: 18px;
+      padding: 16px;
+      border-radius: 14px;
+      border: 1px dashed rgba(102,179,255,0.35);
+      background: rgba(47,128,237,0.06);
+    }
+
+    .manual-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr auto;
+      gap: 12px;
+      align-items: end;
+    }
+
+    .toast-stack {
+      position: fixed;
+      left: 24px;
+      right: 24px;
+      bottom: 24px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+      z-index: 9999;
+      pointer-events: none;
+    }
+
+    .toast {
+      width: min(720px, 100%);
+      border-radius: 10px;
+      box-shadow: 0 14px 30px rgba(0,0,0,0.28);
+      overflow: hidden;
+      pointer-events: auto;
+      animation: toastIn 0.22s ease-out;
+    }
+
+    .toast.success { background: #DDF5E8; border-bottom: 5px solid #16B364; color: #184B32; }
+    .toast.error { background: #FDE8E8; border-bottom: 5px solid #F04438; color: #5F2120; }
+    .toast.warning { background: #FDF0DD; border-bottom: 5px solid #F59E0B; color: #6B4A14; }
+
+    .toast-inner {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      padding: 16px 18px 14px;
+    }
+
+    .toast-icon {
+      width: 34px;
+      height: 34px;
+      border-radius: 999px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      color: white;
+      flex: 0 0 34px;
+    }
+
+    .toast.success .toast-icon { background: #16B364; }
+    .toast.error .toast-icon { background: #F04438; }
+    .toast.warning .toast-icon { background: #F59E0B; }
+
+    .toast-title { font-size: 18px; font-weight: 800; }
+    .toast-message { font-size: 15px; }
+
+    @keyframes toastIn {
+      from { opacity: 0; transform: translateY(16px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .mode-row {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .mode-button {
+      flex: 1;
+    }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <a href="/" class="home-button">Home</a>
+  </div>
+
+  <div class="wrap">
+    <div class="page-header">
+      <h1 class="page-title">Create Outbound</h1>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <h2>Outbound Setup</h2>
+
+        <div class="mode-row">
+          <button id="sellingBtn" class="button mode-button">Selling</button>
+          <button id="forwardingBtn" class="button secondary mode-button">Forwarding</button>
+        </div>
+
+        <div class="stack">
+          <div>
+            <div class="field-label">Buyer</div>
+            <select id="buyerSelect">
+              <option value="" selected disabled>Select Buyer</option>
+              <option value="unknown">Unknown</option>
+            </select>
+          </div>
+
+          <div class="button-row">
+            <button id="addBuyerBtn" class="button secondary">+ Add New Buyer</button>
+          </div>
+
+          <div>
+            <div class="field-label">Scan Product GTIN</div>
+            <input id="scanInput" class="input" placeholder="Scan GTIN and press Enter" />
+          </div>
+        </div>
+
+        <div class="manual-block">
+          <div class="field-label">Manual Add</div>
+          <div class="manual-grid">
+            <div>
+              <div class="field-label">SKU</div>
+              <input id="manualSkuInput" class="input" />
+            </div>
+            <div>
+              <div class="field-label">Size</div>
+              <input id="manualSizeInput" class="input" />
+            </div>
+            <div>
+              <button id="manualSearchBtn" class="button">Search</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Summary</h2>
+
+        <div class="summary-top">
+          <div>
+            <div class="field-label">Shipping Labels Needed</div>
+            <input id="shippingLabelsInput" class="input" type="number" min="1" value="1" />
+          </div>
+          <div>
+            <div class="field-label">Total Selling Price</div>
+            <input id="totalSellingPriceInput" class="input" type="number" min="0" step="0.01" />
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Product GTIN</th>
+                <th>Product Name</th>
+                <th>SKU</th>
+                <th>Size</th>
+                <th>Available</th>
+                <th>Quantity</th>
+                <th>Unit Price</th>
+                <th>Total Price</th>
+              </tr>
+            </thead>
+            <tbody id="itemsTableBody">
+              <tr>
+                <td colspan="8" class="empty">No products added yet</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="actions">
+          <button id="submitBtn" class="button">Submit</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="toastStack" class="toast-stack"></div>
+
+  <script>
+    const buyerSelect = document.getElementById("buyerSelect");
+    const addBuyerBtn = document.getElementById("addBuyerBtn");
+    const scanInput = document.getElementById("scanInput");
+    const manualSkuInput = document.getElementById("manualSkuInput");
+    const manualSizeInput = document.getElementById("manualSizeInput");
+    const manualSearchBtn = document.getElementById("manualSearchBtn");
+    const itemsTableBody = document.getElementById("itemsTableBody");
+    const submitBtn = document.getElementById("submitBtn");
+    const sellingBtn = document.getElementById("sellingBtn");
+    const forwardingBtn = document.getElementById("forwardingBtn");
+    const shippingLabelsInput = document.getElementById("shippingLabelsInput");
+    const totalSellingPriceInput = document.getElementById("totalSellingPriceInput");
+    const toastStack = document.getElementById("toastStack");
+
+    let outboundMode = "Selling";
+    let items = [];
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    function showToast(message, type = "success", title = "") {
+      const toast = document.createElement("div");
+      toast.className = `toast ${type}`;
+
+      const resolvedTitle = title || (type === "success" ? "Success" : type === "warning" ? "Warning" : "Error");
+      const icon = type === "success" ? "✓" : type === "warning" ? "!" : "✕";
+
+      toast.innerHTML = `
+        <div class="toast-inner">
+          <div class="toast-icon">${icon}</div>
+          <div>
+            <div class="toast-title">${resolvedTitle}</div>
+            <div class="toast-message">${escapeHtml(message)}</div>
+          </div>
+        </div>
+      `;
+
+      toastStack.appendChild(toast);
+      setTimeout(() => toast.remove(), 5000);
+    }
+
+    async function loadBuyers() {
+      const response = await fetch("/api/outbound-buyers");
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.details || data.error || "Failed to load buyers");
+      }
+
+      buyerSelect.innerHTML = `
+        <option value="" selected disabled>Select Buyer</option>
+        <option value="unknown">Unknown</option>
+      `;
+
+      for (const option of data.options) {
+        const el = document.createElement("option");
+        el.value = option.id;
+        el.textContent = option.label;
+        buyerSelect.appendChild(el);
+      }
+    }
+
+    function renderTable() {
+      if (!items.length) {
+        itemsTableBody.innerHTML = `<tr><td colspan="8" class="empty">No products added yet</td></tr>`;
+        return;
+      }
+
+      itemsTableBody.innerHTML = items.map((item, index) => `
+        <tr>
+          <td>${escapeHtml(item.gtin)}</td>
+          <td>${escapeHtml(item.productName)}</td>
+          <td>${escapeHtml(item.sku)}</td>
+          <td>${escapeHtml(item.size)}</td>
+          <td>${item.availableQuantity}</td>
+          <td>
+            <input
+              class="input"
+              type="number"
+              min="1"
+              max="${item.availableQuantity}"
+              value="${item.quantity}"
+              data-index="${index}"
+              data-field="quantity"
+            />
+          </td>
+          <td>${item.unitPrice.toFixed(2)}</td>
+          <td>${(item.unitPrice * item.quantity).toFixed(2)}</td>
+        </tr>
+      `).join("");
+    }
+
+    function addOrIncrementItem(data) {
+      const existing = items.find((item) => item.gtin === data.gtin);
+
+      if (existing) {
+        if (existing.quantity >= existing.availableQuantity) {
+          showToast("You cannot add more than available stock for this product.", "warning", "Warning");
+          return;
+        }
+
+        existing.quantity += 1;
+        renderTable();
+        return;
+      }
+
+      items.push({
+        gtin: data.gtin,
+        productName: data.product_name,
+        sku: data.sku,
+        size: data.size,
+        availableQuantity: data.available_quantity,
+        quantity: 1,
+        unitPrice: Number(data.unit_price) || 0
+      });
+
+      renderTable();
+    }
+
+    async function lookupByGTIN(gtin) {
+      const response = await fetch("/api/outbound-lookup-gtin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ gtin })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.details || data.error || "Lookup failed");
+      }
+
+      if (!data.found) {
+        if (data.reason === "unknown_gtin") {
+          showToast("Product GTIN unknown in Inventory.", "warning", "Warning");
+        } else if (data.reason === "no_available_items") {
+          showToast("There are no available items from this product.", "warning", "Warning");
+        }
+        return;
+      }
+
+      addOrIncrementItem(data);
+      showToast(`Added ${data.product_name}.`, "success", "Success");
+    }
+
+    async function searchBySkuSize() {
+      const sku = manualSkuInput.value.trim();
+      const size = manualSizeInput.value.trim();
+
+      if (!sku || !size) {
+        showToast("Please fill SKU and Size first.", "warning", "Warning");
+        return;
+      }
+
+      const response = await fetch("/api/outbound-search-sku-size", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sku, size })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.details || data.error || "Search failed");
+      }
+
+      if (!data.found) {
+        showToast("No available products found for this SKU and Size.", "warning", "Warning");
+        return;
+      }
+
+      addOrIncrementItem(data);
+      showToast(`Added ${data.product_name}.`, "success", "Success");
+    }
+
+    async function addBuyer() {
+      const fullName = window.prompt("Enter new buyer name");
+      if (!fullName) return;
+
+      const response = await fetch("/api/outbound-buyers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ full_name: fullName })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.details || data.error || "Failed to create buyer");
+      }
+
+      await loadBuyers();
+      buyerSelect.value = data.id;
+      showToast(`Buyer ${data.label} created.`, "success", "Success");
+    }
+
+    function resetPage() {
+      items = [];
+      scanInput.value = "";
+      manualSkuInput.value = "";
+      manualSizeInput.value = "";
+      shippingLabelsInput.value = "1";
+      totalSellingPriceInput.value = "";
+      buyerSelect.value = "";
+      renderTable();
+    }
+
+    sellingBtn.addEventListener("click", () => {
+      outboundMode = "Selling";
+      sellingBtn.className = "button mode-button";
+      forwardingBtn.className = "button secondary mode-button";
+    });
+
+    forwardingBtn.addEventListener("click", () => {
+      showToast("Forwarding is not built yet.", "warning", "Warning");
+    });
+
+    addBuyerBtn.addEventListener("click", async () => {
+      try {
+        await addBuyer();
+      } catch (error) {
+        showToast(error.message, "error", "Error");
+      }
+    });
+
+    scanInput.addEventListener("keydown", async (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+
+      const value = scanInput.value.trim();
+      scanInput.value = "";
+
+      if (!value) return;
+
+      try {
+        await lookupByGTIN(value);
+      } catch (error) {
+        showToast(error.message, "error", "Error");
+      }
+    });
+
+    manualSearchBtn.addEventListener("click", async () => {
+      try {
+        await searchBySkuSize();
+      } catch (error) {
+        showToast(error.message, "error", "Error");
+      }
+    });
+
+    itemsTableBody.addEventListener("input", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLInputElement)) return;
+
+      const index = Number(target.dataset.index);
+      const field = target.dataset.field;
+
+      if (!Number.isInteger(index) || !items[index]) return;
+      if (field !== "quantity") return;
+
+      const parsed = Number(target.value);
+      const max = items[index].availableQuantity;
+
+      if (!Number.isFinite(parsed) || parsed < 1) {
+        items[index].quantity = 1;
+      } else if (parsed > max) {
+        items[index].quantity = max;
+        showToast("You cannot exceed available stock.", "warning", "Warning");
+      } else {
+        items[index].quantity = Math.floor(parsed);
+      }
+
+      renderTable();
+    });
+
+    submitBtn.addEventListener("click", () => {
+      if (outboundMode !== "Selling") {
+        showToast("Only Selling is built right now.", "warning", "Warning");
+        return;
+      }
+
+      if (!buyerSelect.value) {
+        showToast("Please select a Buyer before submitting.", "warning", "Warning");
+        return;
+      }
+
+      if (!items.length) {
+        showToast("Please add at least one product.", "warning", "Warning");
+        return;
+      }
+
+      if (!shippingLabelsInput.value || Number(shippingLabelsInput.value) < 1) {
+        showToast("Please fill Shipping Labels Needed.", "warning", "Warning");
+        return;
+      }
+
+      if (!totalSellingPriceInput.value) {
+        showToast("Please fill Total Selling Price.", "warning", "Warning");
+        return;
+      }
+
+      showToast("Outbound created successfully.", "success", "Success");
+      resetPage();
+    });
+
+    renderTable();
+    loadBuyers().catch((error) => {
+      showToast(error.message, "error", "Error");
+    });
+  </script>
+</body>
+</html>
