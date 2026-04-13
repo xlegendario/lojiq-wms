@@ -714,7 +714,7 @@ app.post("/api/submit-outbound", async (req, res) => {
     }
 
     const createdRecord = await airtable(AIRTABLE_EXTERNAL_SALES_LOG_TABLE).create({
-      "Linked Invenotry Units": linkedInventoryUnitIds
+      "Linked Inventory Units": linkedInventoryUnitIds
     });
 
     return res.status(200).json({
