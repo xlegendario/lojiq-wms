@@ -123,7 +123,17 @@ async function getInboundPartyOptions() {
 async function getBuyerOptions() {
   const records = await buyersBase(BUYERS_AIRTABLE_TABLE)
     .select({
-      fields: ["Full Name"],
+      fields: [
+        "Full Name",
+        "Company Name",
+        "VAT ID",
+        "Email",
+        "Address",
+        "Address line 2",
+        "Zipcode",
+        "City",
+        "Country"
+      ],
       sort: [{ field: "Full Name", direction: "asc" }]
     })
     .all();
@@ -131,11 +141,21 @@ async function getBuyerOptions() {
   return records
     .map((record) => ({
       id: record.id,
-      label: asText(record.fields["Full Name"])
+      label: asText(record.fields["Full Name"]),
+      details: {
+        full_name: asText(record.fields["Full Name"]),
+        company_name: asText(record.fields["Company Name"]),
+        vat_id: asText(record.fields["VAT ID"]),
+        email: asText(record.fields["Email"]),
+        address: asText(record.fields["Address"]),
+        address_line_2: asText(record.fields["Address line 2"]),
+        zipcode: asText(record.fields["Zipcode"]),
+        city: asText(record.fields["City"]),
+        country: asText(record.fields["Country"])
+      }
     }))
     .filter((option) => option.label);
 }
-
 app.get("/", (_req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
@@ -423,19 +443,50 @@ app.get("/api/outbound-buyers", async (_req, res) => {
 app.post("/api/outbound-buyers", async (req, res) => {
   try {
     const fullName = asText(req.body?.full_name);
+    const companyName = asText(req.body?.company_name);
+    const vatId = asText(req.body?.vat_id);
+    const email = asText(req.body?.email);
+    const address = asText(req.body?.address);
+    const addressLine2 = asText(req.body?.address_line_2);
+    const zipcode = asText(req.body?.zipcode);
+    const city = asText(req.body?.city);
+    const country = asText(req.body?.country);
 
-    if (!fullName) {
-      return res.status(400).json({ error: "Missing full_name" });
+    if (!fullName || !email || !address || !zipcode || !city || !country) {
+      return res.status(400).json({
+        error: "Missing required buyer fields"
+      });
     }
 
     const created = await buyersBase(BUYERS_AIRTABLE_TABLE).create({
-      "Full Name": fullName
+      "Full Name": fullName,
+      "Company Name": companyName || null,
+      "VAT ID": vatId || null,
+      "Email": email,
+      "Address": address,
+      "Address line 2": addressLine2 || null,
+      "Zipcode": zipcode,
+      "City": city,
+      "Country": country
     });
 
     return res.status(200).json({
       ok: true,
-      id: created.id,
-      label: asText(created.fields["Full Name"])
+      option: {
+        id: created.id,
+        label: asText(created.fields["Full Name"]),
+        details: {
+          full_name: asText(created.fields["Full Name"]),
+          company_name: asText(created.fields["Company Name"]),
+          vat_id: asText(created.fields["VAT ID"]),
+          email: asText(created.fields["Email"]),
+          address: asText(created.fields["Address"]),
+          address_line_2: asText(created.fields["Address line 2"]),
+          zipcode: asText(created.fields["Zipcode"]),
+          city: asText(created.fields["City"]),
+          country: asText(created.fields["Country"])
+        }
+      }
     });
   } catch (error) {
     console.error("create outbound buyer failed:", error);
