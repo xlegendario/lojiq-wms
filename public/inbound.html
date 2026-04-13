@@ -203,9 +203,18 @@
 
     .manual-grid {
       display: grid;
-      grid-template-columns: minmax(220px, 1.3fr) minmax(120px, 0.7fr) auto;
+      grid-template-columns: 1.5fr 0.8fr auto;
       gap: 10px;
       align-items: end;
+    }
+
+    .manual-grid .input {
+      width: 100%;
+      min-width: 0;
+    }
+    
+    .manual-grid .button {
+      white-space: nowrap;
     }
 
     .status-item {
