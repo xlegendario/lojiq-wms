@@ -684,6 +684,9 @@ app.post("/api/submit-outbound", async (req, res) => {
   try {
     const mode = asText(req.body?.mode);
     const buyerId = asText(req.body?.buyer_id);
+    const totalSellingPrice = Number(req.body?.total_selling_price) || 0;
+    const shippingCosts = Number(req.body?.shipping_costs) || 0;
+    const shippingLabels = Number(req.body?.shipping_labels) || 0;
     const items = Array.isArray(req.body?.items) ? req.body.items : [];
 
     if (mode !== "Selling") {
@@ -714,7 +717,11 @@ app.post("/api/submit-outbound", async (req, res) => {
     }
 
     const createdRecord = await airtable(AIRTABLE_EXTERNAL_SALES_LOG_TABLE).create({
-      "Linked Inventory Units": linkedInventoryUnitIds
+      "Linked Inventory Units": linkedInventoryUnitIds,
+      "Total Selling Price": totalSellingPrice,
+      "Shipping Costs": shippingCosts,
+      "Shipping Labels": shippingLabels,
+      "Sale Date": new Date().toISOString().split("T")[0]
     });
 
     return res.status(200).json({
