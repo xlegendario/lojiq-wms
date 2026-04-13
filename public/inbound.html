@@ -200,6 +200,14 @@
       border: 1px dashed rgba(102,179,255,0.35);
       background: rgba(47,128,237,0.06);
     }
+    
+    .manual-add-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: 12px;
+      letter-spacing: 0.2px;
+    }
 
     .manual-grid {
       display: grid;
@@ -506,7 +514,7 @@
         <button class="button secondary" id="resetBtn">Reset</button>
 
         <div class="manual-block">
-          <div class="field-label">Manual Add</div>
+          <div class="manual-add-title">Manual Add</div>
           <div class="manual-grid">
             <div>
               <div class="field-label">SKU</div>
@@ -1121,6 +1129,8 @@
       const clickedInsideEditableField =
         target === trackingInput ||
         target === scanInput ||
+        target === manualSkuInput ||
+        target === manualSizeInput ||
         target === typeSelect ||
         target === partySelect ||
         (target instanceof HTMLInputElement && target.dataset.field) ||
