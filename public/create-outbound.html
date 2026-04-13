@@ -188,9 +188,88 @@
 
     .manual-grid {
       display: grid;
-      grid-template-columns: 1fr 1fr auto;
+      grid-template-columns: minmax(260px, 2fr) minmax(120px, 0.8fr) auto;
       gap: 12px;
       align-items: end;
+    }
+
+    .buyer-details,
+    .buyer-form {
+      padding: 14px;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      background: rgba(7,17,31,0.35);
+    }
+
+    .buyer-details {
+      display: none;
+    }
+
+    .buyer-details.visible,
+    .buyer-form.visible {
+      display: block;
+    }
+
+    .buyer-detail-row {
+      display: grid;
+      grid-template-columns: 120px 1fr;
+      gap: 10px;
+      padding: 4px 0;
+      font-size: 14px;
+    }
+
+    .buyer-detail-label {
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .buyer-form {
+      display: none;
+    }
+
+    .buyer-form-grid {
+      display: grid;
+      gap: 12px;
+    }
+
+    .summary-bottom {
+      margin-top: 16px;
+      display: grid;
+      gap: 16px;
+    }
+
+    .summary-fields-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .summary-recap {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .summary-value {
+      width: 100%;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: rgba(7,17,31,0.35);
+      color: var(--text);
+      padding: 14px;
+      font-size: 15px;
+      min-height: 49px;
+      display: flex;
+      align-items: center;
+    }
+
+    .scan-hidden {
+      position: absolute;
+      left: -9999px;
+      width: 1px;
+      height: 1px;
+      opacity: 0;
+      pointer-events: none;
     }
 
     .toast-stack {
@@ -289,14 +368,32 @@
             </select>
           </div>
 
+          <div id="buyerDetails" class="buyer-details"></div>
+
           <div class="button-row">
             <button id="addBuyerBtn" class="button secondary">+ Add New Buyer</button>
+            <button id="refocusBtn" class="button secondary" type="button">Refocus</button>
           </div>
 
-          <div>
-            <div class="field-label">Scan Product GTIN</div>
-            <input id="scanInput" class="input" placeholder="Scan GTIN and press Enter" />
+          <div id="buyerForm" class="buyer-form">
+            <div class="field-label">New Buyer</div>
+            <div class="buyer-form-grid">
+              <input id="buyerFullNameInput" class="input" placeholder="Full Name *" />
+              <input id="buyerCompanyNameInput" class="input" placeholder="Company Name" />
+              <input id="buyerVatIdInput" class="input" placeholder="VAT ID" />
+              <input id="buyerEmailInput" class="input" placeholder="Email *" />
+              <input id="buyerAddressInput" class="input" placeholder="Address *" />
+              <input id="buyerAddressLine2Input" class="input" placeholder="Address Line 2 *" />
+              <input id="buyerZipcodeInput" class="input" placeholder="Zipcode *" />
+              <input id="buyerCityInput" class="input" placeholder="City *" />
+              <select id="buyerCountryInput">
+                <option value="" selected disabled>Select Country</option>
+              </select>
+              <button id="saveBuyerBtn" class="button" type="button">Save Buyer</button>
+            </div>
           </div>
+
+          <input id="scanInput" class="input scan-hidden" placeholder="Scan GTIN and press Enter" />
         </div>
 
         <div class="manual-block">
@@ -311,7 +408,7 @@
               <input id="manualSizeInput" class="input" />
             </div>
             <div>
-              <button id="manualSearchBtn" class="button">Search</button>
+              <button id="manualSearchBtn" class="button">+ Add</button>
             </div>
           </div>
         </div>
@@ -319,17 +416,6 @@
 
       <div class="card">
         <h2>Summary</h2>
-
-        <div class="summary-top">
-          <div>
-            <div class="field-label">Shipping Labels Needed</div>
-            <input id="shippingLabelsInput" class="input" type="number" min="1" value="1" />
-          </div>
-          <div>
-            <div class="field-label">Total Selling Price</div>
-            <input id="totalSellingPriceInput" class="input" type="number" min="0" step="0.01" />
-          </div>
-        </div>
 
         <div class="table-wrap">
           <table>
@@ -353,6 +439,30 @@
           </table>
         </div>
 
+        <div class="summary-bottom">
+          <div class="summary-fields-grid">
+            <div>
+              <div class="field-label">Shipping Labels Needed</div>
+              <input id="shippingLabelsInput" class="input" type="number" min="1" value="1" />
+            </div>
+            <div>
+              <div class="field-label">Total Selling Price</div>
+              <input id="totalSellingPriceInput" class="input" type="number" min="0" step="0.01" />
+            </div>
+          </div>
+
+          <div class="summary-recap">
+            <div>
+              <div class="field-label">Items Total</div>
+              <div id="itemsTotalValue" class="summary-value">0.00</div>
+            </div>
+            <div>
+              <div class="field-label">Shipping Costs</div>
+              <input id="shippingCostsInput" class="input" type="number" min="0" step="0.01" value="0" />
+            </div>
+          </div>
+        </div>
+
         <div class="actions">
           <button id="submitBtn" class="button">Submit</button>
         </div>
@@ -365,6 +475,19 @@
   <script>
     const buyerSelect = document.getElementById("buyerSelect");
     const addBuyerBtn = document.getElementById("addBuyerBtn");
+    const buyerDetails = document.getElementById("buyerDetails");
+    const buyerForm = document.getElementById("buyerForm");
+    const saveBuyerBtn = document.getElementById("saveBuyerBtn");
+    const refocusBtn = document.getElementById("refocusBtn");
+    const buyerFullNameInput = document.getElementById("buyerFullNameInput");
+    const buyerCompanyNameInput = document.getElementById("buyerCompanyNameInput");
+    const buyerVatIdInput = document.getElementById("buyerVatIdInput");
+    const buyerEmailInput = document.getElementById("buyerEmailInput");
+    const buyerAddressInput = document.getElementById("buyerAddressInput");
+    const buyerAddressLine2Input = document.getElementById("buyerAddressLine2Input");
+    const buyerZipcodeInput = document.getElementById("buyerZipcodeInput");
+    const buyerCityInput = document.getElementById("buyerCityInput");
+    const buyerCountryInput = document.getElementById("buyerCountryInput");
     const scanInput = document.getElementById("scanInput");
     const manualSkuInput = document.getElementById("manualSkuInput");
     const manualSizeInput = document.getElementById("manualSizeInput");
@@ -375,10 +498,13 @@
     const forwardingBtn = document.getElementById("forwardingBtn");
     const shippingLabelsInput = document.getElementById("shippingLabelsInput");
     const totalSellingPriceInput = document.getElementById("totalSellingPriceInput");
+    const shippingCostsInput = document.getElementById("shippingCostsInput");
+    const itemsTotalValue = document.getElementById("itemsTotalValue");
     const toastStack = document.getElementById("toastStack");
 
     let outboundMode = "Selling";
     let items = [];
+    let buyers = [];
 
     function escapeHtml(value) {
       return String(value ?? "")
@@ -418,12 +544,14 @@
         throw new Error(data.details || data.error || "Failed to load buyers");
       }
 
+      buyers = Array.isArray(data.options) ? data.options : [];
+
       buyerSelect.innerHTML = `
         <option value="" selected disabled>Select Buyer</option>
         <option value="unknown">Unknown</option>
       `;
 
-      for (const option of data.options) {
+      for (const option of buyers) {
         const el = document.createElement("option");
         el.value = option.id;
         el.textContent = option.label;
@@ -431,9 +559,101 @@
       }
     }
 
+    async function loadBuyerCountryOptions() {
+      const response = await fetch("/api/outbound-buyer-country-options");
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.details || data.error || "Failed to load country options");
+      }
+
+      buyerCountryInput.innerHTML = `<option value="" selected disabled>Select Country</option>`;
+
+      for (const option of data.options || []) {
+        const el = document.createElement("option");
+        el.value = option;
+        el.textContent = option;
+        buyerCountryInput.appendChild(el);
+      }
+    }
+
+    function renderBuyerDetails() {
+      const selectedId = buyerSelect.value;
+
+      if (!selectedId || selectedId === "unknown") {
+        buyerDetails.className = "buyer-details";
+        buyerDetails.innerHTML = "";
+        return;
+      }
+
+      const selectedBuyer = buyers.find((buyer) => buyer.id === selectedId);
+      if (!selectedBuyer) {
+        buyerDetails.className = "buyer-details";
+        buyerDetails.innerHTML = "";
+        return;
+      }
+
+      const details = selectedBuyer.details || {};
+      const addressParts = [details.address, details.address_line_2].filter(Boolean);
+
+      const rows = [
+        ["Full Name", details.full_name],
+        ["Company Name", details.company_name],
+        ["VAT ID", details.vat_id],
+        ["Email", details.email],
+        ["Address", addressParts.join(", ")],
+        ["Zipcode", details.zipcode],
+        ["City", details.city],
+        ["Country", details.country]
+      ].filter(([, value]) => value);
+
+      buyerDetails.innerHTML = rows.map(([label, value]) => `
+        <div class="buyer-detail-row">
+          <div class="buyer-detail-label">${escapeHtml(label)}</div>
+          <div>${escapeHtml(value)}</div>
+        </div>
+      `).join("");
+
+      buyerDetails.className = "buyer-details visible";
+    }
+
+    function clearBuyerForm() {
+      buyerFullNameInput.value = "";
+      buyerCompanyNameInput.value = "";
+      buyerVatIdInput.value = "";
+      buyerEmailInput.value = "";
+      buyerAddressInput.value = "";
+      buyerAddressLine2Input.value = "";
+      buyerZipcodeInput.value = "";
+      buyerCityInput.value = "";
+      buyerCountryInput.value = "";
+    }
+
+    function toggleBuyerForm(forceVisible) {
+      const shouldShow = typeof forceVisible === "boolean"
+        ? forceVisible
+        : !buyerForm.classList.contains("visible");
+
+      buyerForm.className = shouldShow ? "buyer-form visible" : "buyer-form";
+      addBuyerBtn.textContent = shouldShow ? "Cancel New Buyer" : "+ Add New Buyer";
+
+      if (!shouldShow) {
+        clearBuyerForm();
+      }
+    }
+
+    function getItemsTotal() {
+      return items.reduce((sum, item) => sum + (item.unitPrice * item.quantity), 0);
+    }
+
+    function renderSummaryTotals() {
+      itemsTotalValue.textContent = getItemsTotal().toFixed(2);
+    }
+
     function renderTable() {
       if (!items.length) {
         itemsTableBody.innerHTML = `<tr><td colspan="8" class="empty">No products added yet</td></tr>`;
+        renderSummaryTotals();
         return;
       }
 
@@ -459,6 +679,8 @@
           <td>${(item.unitPrice * item.quantity).toFixed(2)}</td>
         </tr>
       `).join("");
+
+      renderSummaryTotals();
     }
 
     function addOrIncrementItem(data) {
@@ -545,13 +767,22 @@
     }
 
     async function addBuyer() {
-      const fullName = window.prompt("Enter new buyer name");
-      if (!fullName) return;
+      const payload = {
+        full_name: buyerFullNameInput.value.trim(),
+        company_name: buyerCompanyNameInput.value.trim(),
+        vat_id: buyerVatIdInput.value.trim(),
+        email: buyerEmailInput.value.trim(),
+        address: buyerAddressInput.value.trim(),
+        address_line_2: buyerAddressLine2Input.value.trim(),
+        zipcode: buyerZipcodeInput.value.trim(),
+        city: buyerCityInput.value.trim(),
+        country: buyerCountryInput.value.trim()
+      };
 
       const response = await fetch("/api/outbound-buyers", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ full_name: fullName })
+        body: JSON.stringify(payload)
       });
 
       const data = await response.json();
@@ -560,9 +791,17 @@
         throw new Error(data.details || data.error || "Failed to create buyer");
       }
 
-      await loadBuyers();
-      buyerSelect.value = data.id;
-      showToast(`Buyer ${data.label} created.`, "success", "Success");
+      buyers.push(data.option);
+
+      const el = document.createElement("option");
+      el.value = data.option.id;
+      el.textContent = data.option.label;
+      buyerSelect.appendChild(el);
+
+      buyerSelect.value = data.option.id;
+      renderBuyerDetails();
+      toggleBuyerForm(false);
+      showToast(`Buyer ${data.option.label} created.`, "success", "Success");
     }
 
     function resetPage() {
@@ -572,8 +811,13 @@
       manualSizeInput.value = "";
       shippingLabelsInput.value = "1";
       totalSellingPriceInput.value = "";
+      shippingCostsInput.value = "0";
       buyerSelect.value = "";
+      buyerDetails.className = "buyer-details";
+      buyerDetails.innerHTML = "";
+      toggleBuyerForm(false);
       renderTable();
+      scanInput.focus();
     }
 
     sellingBtn.addEventListener("click", () => {
@@ -586,12 +830,26 @@
       showToast("Forwarding is not built yet.", "warning", "Warning");
     });
 
-    addBuyerBtn.addEventListener("click", async () => {
+    addBuyerBtn.addEventListener("click", () => {
+      toggleBuyerForm();
+    });
+
+    saveBuyerBtn.addEventListener("click", async () => {
       try {
         await addBuyer();
       } catch (error) {
         showToast(error.message, "error", "Error");
       }
+    });
+
+    refocusBtn.addEventListener("click", () => {
+      scanInput.focus();
+      showToast("Scanner refocused.", "success", "Success");
+    });
+
+    buyerSelect.addEventListener("change", () => {
+      renderBuyerDetails();
+      scanInput.focus();
     });
 
     scanInput.addEventListener("keydown", async (event) => {
@@ -674,9 +932,15 @@
     });
 
     renderTable();
-    loadBuyers().catch((error) => {
-      showToast(error.message, "error", "Error");
-    });
+
+    Promise.all([loadBuyers(), loadBuyerCountryOptions()])
+      .then(() => {
+        renderBuyerDetails();
+        scanInput.focus();
+      })
+      .catch((error) => {
+        showToast(error.message, "error", "Error");
+      });
   </script>
 </body>
 </html>
