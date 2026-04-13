@@ -52,8 +52,21 @@ function asText(value) {
   return String(value).trim();
 }
 
-function escapeFormulaValue(value) {
-  return asText(value).replace(/'/g, "\\'");
+async function updateInventoryUnitsToReserved(recordIds) {
+  const uniqueIds = [...new Set((recordIds || []).filter(Boolean))];
+
+  for (let i = 0; i < uniqueIds.length; i += 10) {
+    const batch = uniqueIds.slice(i, i + 10);
+
+    await airtable(AIRTABLE_INVENTORY_UNITS_TABLE).update(
+      batch.map((id) => ({
+        id,
+        fields: {
+          "Availability Status": "Reserved"
+        }
+      }))
+    );
+  }
 }
 
 async function findMainBuyerRecordByBuyerId(buyerIdValue) {
@@ -809,6 +822,9 @@ app.post("/api/submit-outbound", async (req, res) => {
       "Shipping Labels": shippingLabels,
       "Sale Date": new Date().toISOString().split("T")[0]
     });
+
+    await updateInventoryUnitsToReserved(linkedInventoryUnitIds);
+
     return res.status(200).json({
       ok: true,
       id: createdRecord.id,
