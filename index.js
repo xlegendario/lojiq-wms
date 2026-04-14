@@ -117,6 +117,68 @@ async function findIncomingStockByGTIN(gtin) {
   return records[0] || null;
 }
 
+async function getReadyToShipOutbounds() {
+  const records = await airtable(AIRTABLE_EXTERNAL_SALES_LOG_TABLE)
+    .select({
+      fields: [
+        "Shipping Status",
+        "Tracking Numbers",
+        "Shipping Labels",
+        "Linked Inventory Units"
+      ],
+      filterByFormula: `{Shipping Status} = 'Ready To Ship'`
+    })
+    .all();
+
+  const allInventoryUnitIds = [...new Set(
+    records.flatMap((record) => Array.isArray(record.fields["Linked Inventory Units"]) ? record.fields["Linked Inventory Units"] : [])
+  )];
+
+  const inventoryUnitsById = new Map();
+
+  for (let i = 0; i < allInventoryUnitIds.length; i += 10) {
+    const batch = allInventoryUnitIds.slice(i, i + 10);
+    const batchRecords = await Promise.all(
+      batch.map((id) => airtable(AIRTABLE_INVENTORY_UNITS_TABLE).find(id))
+    );
+
+    for (const record of batchRecords) {
+      inventoryUnitsById.set(record.id, {
+        id: record.id,
+        gtin: asText(record.fields["Product GTIN"]),
+        productName: asText(record.fields["Product Name"]),
+        sku: asText(record.fields["SKU"]),
+        size: asText(record.fields["Size"])
+      });
+    }
+  }
+
+  return records.map((record) => {
+    const trackingNumbersRaw = asText(record.fields["Tracking Numbers"]);
+    const trackingNumbers = trackingNumbersRaw
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
+
+    const linkedInventoryUnits = Array.isArray(record.fields["Linked Inventory Units"])
+      ? record.fields["Linked Inventory Units"]
+      : [];
+
+    const items = linkedInventoryUnits
+      .map((id) => inventoryUnitsById.get(id))
+      .filter(Boolean);
+
+    return {
+      recordId: record.id,
+      shippingLabels: Array.isArray(record.fields["Shipping Labels"]) ? record.fields["Shipping Labels"] : [],
+      items,
+      parcels: trackingNumbers.map((trackingNumber) => ({
+        trackingNumber
+      }))
+    };
+  });
+}
+
 async function getInboundPartyOptions() {
   const sellerRecords = await airtable(AIRTABLE_SELLERS_TABLE)
     .select({
@@ -500,6 +562,51 @@ app.post("/api/receive-parcel", async (req, res) => {
     });
   }
 });
+
+app.get("/api/pack-ship-ready", async (_req, res) => {
+  try {
+    const shipments = await getReadyToShipOutbounds();
+
+    return res.status(200).json({
+      ok: true,
+      shipments
+    });
+  } catch (error) {
+    console.error("pack-ship-ready failed:", error);
+    return res.status(500).json({
+      error: "Failed to load ready-to-ship outbounds",
+      details: error.message
+    });
+  }
+});
+
+app.post("/api/submit-pack-ship", async (req, res) => {
+  try {
+    const outboundId = asText(req.body?.outbound_id);
+    const itemsPerParcel = asText(req.body?.items_per_parcel);
+
+    if (!outboundId) {
+      return res.status(400).json({ error: "Missing outbound_id" });
+    }
+
+    await airtable(AIRTABLE_EXTERNAL_SALES_LOG_TABLE).update(outboundId, {
+      "Items per Parcel": itemsPerParcel,
+      "Shipping Status": "Shipped"
+    });
+
+    return res.status(200).json({
+      ok: true
+    });
+  } catch (error) {
+    console.error("submit-pack-ship failed:", error);
+    return res.status(500).json({
+      error: "Failed to submit pack & ship",
+      details: error.message
+    });
+  }
+});
+
+app.get("/api/outbound-buyers", async (_req, res) => {
 
 app.get("/api/outbound-buyers", async (_req, res) => {
   try {
