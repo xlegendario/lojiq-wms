@@ -128,6 +128,8 @@ async function getPackShipOutboundOptions() {
   const records = await airtable(AIRTABLE_EXTERNAL_SALES_LOG_TABLE)
     .select({
       fields: [
+        "External Deal ID",
+        "Buyer Name",
         "Shipping Status",
         "Tracking Numbers"
       ]
@@ -139,9 +141,12 @@ async function getPackShipOutboundOptions() {
       const shippingStatus = asText(record.fields["Shipping Status"]);
       const trackingNumbers = parseTrackingNumbers(record.fields["Tracking Numbers"]);
 
+      const externalDealId = asText(record.fields["External Deal ID"]);
+      const buyerName = asText(record.fields["Buyer Name"]);
+
       return {
         id: record.id,
-        label: `${record.id} • ${shippingStatus || "No Status"} • ${trackingNumbers.length} tracking number(s)`,
+        label: `${externalDealId || record.id} - ${buyerName || "Unknown Buyer"}`,
         shipping_status: shippingStatus,
         tracking_numbers_count: trackingNumbers.length
       };
