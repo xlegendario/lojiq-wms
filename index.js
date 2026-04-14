@@ -56,7 +56,7 @@ function escapeFormulaValue(value) {
   return asText(value).replace(/'/g, "\\'");
 }
 
-async function updateInventoryUnitsToReserved(recordIds) {
+async function updateInventoryUnitsToSold(recordIds) {
   const uniqueIds = [...new Set((recordIds || []).filter(Boolean))];
 
   for (let i = 0; i < uniqueIds.length; i += 10) {
@@ -66,7 +66,7 @@ async function updateInventoryUnitsToReserved(recordIds) {
       batch.map((id) => ({
         id,
         fields: {
-          "Availability Status": "Reserved"
+          "Availability Status": "Sold"
         }
       }))
     );
@@ -613,6 +613,9 @@ app.post("/api/submit-pack-ship", async (req, res) => {
   try {
     const outboundId = asText(req.body?.outbound_id);
     const itemsPerParcel = asText(req.body?.items_per_parcel);
+    const packedInventoryUnitIds = Array.isArray(req.body?.packed_inventory_unit_ids)
+      ? req.body.packed_inventory_unit_ids.map((id) => asText(id)).filter(Boolean)
+      : [];
 
     if (!outboundId) {
       return res.status(400).json({ error: "Missing outbound_id" });
@@ -622,10 +625,16 @@ app.post("/api/submit-pack-ship", async (req, res) => {
       return res.status(400).json({ error: "Missing items_per_parcel" });
     }
 
+    if (!packedInventoryUnitIds.length) {
+      return res.status(400).json({ error: "No packed inventory unit ids provided" });
+    }
+
     await airtable(AIRTABLE_EXTERNAL_SALES_LOG_TABLE).update(outboundId, {
       "Items per Parcel": itemsPerParcel,
       "Shipping Status": "Shipped"
     });
+
+    await updateInventoryUnitsToSold(packedInventoryUnitIds);
 
     return res.status(200).json({
       ok: true
