@@ -23,8 +23,9 @@ const {
   AIRTABLE_MERCHANTS_TABLE = "Merchants",
   AIRTABLE_INVENTORY_UNITS_TABLE = "Inventory Units",
   AIRTABLE_EXTERNAL_SALES_LOG_TABLE = "External Sales Log",
-  AIRTABLE_BUYERS_TABLE = "Buyers Database", // Main Airtable
+  AIRTABLE_FORWARDING_SERVICE_LOG_TABLE = "Forwarding Service Log",
   BUYERS_AIRTABLE_BASE_ID,
+  AIRTABLE_BUYERS_TABLE = "Buyers Database", // Main Airtable
   BUYERS_AIRTABLE_TABLE = "Buyer Database",  // External Airtable
   BUYERS_AIRTABLE_TOKEN
 } = process.env;
@@ -54,6 +55,39 @@ function asText(value) {
 
 function escapeFormulaValue(value) {
   return asText(value).replace(/'/g, "\\'");
+}
+
+async function updateInventoryUnitsToForwardPending(recordIds) {
+  const uniqueIds = [...new Set((recordIds || []).filter(Boolean))];
+
+  for (let i = 0; i < uniqueIds.length; i += 10) {
+    const batch = uniqueIds.slice(i, i + 10);
+
+    await airtable(AIRTABLE_INVENTORY_UNITS_TABLE).update(
+      batch.map((id) => ({
+        id,
+        fields: {
+          "Availability Status": "Forward Pending"
+        }
+      }))
+    );
+  }
+}
+
+async function getAverageForwardingFeeForSellerIds(sellerIds) {
+  const uniqueSellerIds = [...new Set((sellerIds || []).filter(Boolean))];
+  if (!uniqueSellerIds.length) return 0;
+
+  const sellerRecords = await Promise.all(
+    uniqueSellerIds.map((id) => airtable(AIRTABLE_SELLERS_TABLE).find(id))
+  );
+
+  const fees = sellerRecords
+    .map((record) => Number(record.fields["Forwarding Fee"]))
+    .filter((value) => Number.isFinite(value));
+
+  if (!fees.length) return 0;
+  return fees.reduce((sum, value) => sum + value, 0) / fees.length;
 }
 
 async function updateInventoryUnitsToSold(recordIds) {
@@ -788,18 +822,20 @@ app.post("/api/outbound-buyers", async (req, res) => {
 app.post("/api/outbound-lookup-gtin", async (req, res) => {
   try {
     const gtin = asText(req.body?.gtin);
+    const mode = asText(req.body?.mode) || "Selling";
 
     if (!gtin) {
       return res.status(400).json({ error: "Missing gtin" });
     }
 
     const safeGtin = escapeFormulaValue(gtin);
+    const statusToMatch = mode === "Forwarding" ? "Ready to Forward" : "Available";
 
     const records = await airtable(AIRTABLE_INVENTORY_UNITS_TABLE)
       .select({
         filterByFormula: `AND(
           TRIM({Product GTIN} & '') = '${safeGtin}',
-          {Availability Status} = 'Available'
+          {Availability Status} = '${escapeFormulaValue(statusToMatch)}'
         )`
       })
       .all();
@@ -829,13 +865,24 @@ app.post("/api/outbound-lookup-gtin", async (req, res) => {
     const productName = asText(first.fields["Product Name"]);
     const sku = asText(first.fields["SKU"]);
     const size = asText(first.fields["Size"]);
+    const sellerIds = records
+      .map((record) => Array.isArray(record.fields["Seller ID"]) ? record.fields["Seller ID"] : [])
+      .flat();
 
-    const purchasePrices = records
-      .map((r) => Number(r.fields["Purchase Price"]))
-      .filter((n) => Number.isFinite(n));
+    let averagePrice = 0;
+    let totalPrice = 0;
 
-    const totalPrice = purchasePrices.reduce((sum, n) => sum + n, 0);
-    const averagePrice = purchasePrices.length ? totalPrice / purchasePrices.length : 0;
+    if (mode === "Forwarding") {
+      averagePrice = await getAverageForwardingFeeForSellerIds(sellerIds);
+      totalPrice = averagePrice * records.length;
+    } else {
+      const purchasePrices = records
+        .map((r) => Number(r.fields["Purchase Price"]))
+        .filter((n) => Number.isFinite(n));
+
+      totalPrice = purchasePrices.reduce((sum, n) => sum + n, 0);
+      averagePrice = purchasePrices.length ? totalPrice / purchasePrices.length : 0;
+    }
 
     return res.status(200).json({
       found: true,
@@ -846,7 +893,8 @@ app.post("/api/outbound-lookup-gtin", async (req, res) => {
       available_quantity: records.length,
       unit_price: averagePrice,
       total_available_price: totalPrice,
-      inventory_unit_ids: records.map((record) => record.id)
+      inventory_unit_ids: records.map((record) => record.id),
+      seller_ids: sellerIds
     });
   } catch (error) {
     console.error("outbound-lookup-gtin failed:", error);
@@ -861,6 +909,7 @@ app.post("/api/outbound-search-sku-size", async (req, res) => {
   try {
     const sku = asText(req.body?.sku).toUpperCase();
     const size = asText(req.body?.size);
+    const mode = asText(req.body?.mode) || "Selling";
 
     if (!sku || !size) {
       return res.status(400).json({ error: "Missing sku or size" });
@@ -868,13 +917,14 @@ app.post("/api/outbound-search-sku-size", async (req, res) => {
 
     const safeSku = escapeFormulaValue(sku);
     const safeSize = escapeFormulaValue(size);
+    const statusToMatch = mode === "Forwarding" ? "Ready to Forward" : "Available";
 
     const records = await airtable(AIRTABLE_INVENTORY_UNITS_TABLE)
       .select({
         filterByFormula: `AND(
           UPPER(TRIM({SKU} & '')) = '${safeSku}',
           TRIM({Size} & '') = '${safeSize}',
-          {Availability Status} = 'Available'
+          {Availability Status} = '${escapeFormulaValue(statusToMatch)}'
         )`
       })
       .all();
@@ -889,13 +939,24 @@ app.post("/api/outbound-search-sku-size", async (req, res) => {
     const first = records[0];
     const gtin = asText(first.fields["Product GTIN"]);
     const productName = asText(first.fields["Product Name"]);
+    const sellerIds = records
+      .map((record) => Array.isArray(record.fields["Seller ID"]) ? record.fields["Seller ID"] : [])
+      .flat();
 
-    const purchasePrices = records
-      .map((r) => Number(r.fields["Purchase Price"]))
-      .filter((n) => Number.isFinite(n));
+    let averagePrice = 0;
+    let totalPrice = 0;
 
-    const totalPrice = purchasePrices.reduce((sum, n) => sum + n, 0);
-    const averagePrice = purchasePrices.length ? totalPrice / purchasePrices.length : 0;
+    if (mode === "Forwarding") {
+      averagePrice = await getAverageForwardingFeeForSellerIds(sellerIds);
+      totalPrice = averagePrice * records.length;
+    } else {
+      const purchasePrices = records
+        .map((r) => Number(r.fields["Purchase Price"]))
+        .filter((n) => Number.isFinite(n));
+
+      totalPrice = purchasePrices.reduce((sum, n) => sum + n, 0);
+      averagePrice = purchasePrices.length ? totalPrice / purchasePrices.length : 0;
+    }
 
     return res.status(200).json({
       found: true,
@@ -906,7 +967,8 @@ app.post("/api/outbound-search-sku-size", async (req, res) => {
       available_quantity: records.length,
       unit_price: averagePrice,
       total_available_price: totalPrice,
-      inventory_unit_ids: records.map((record) => record.id)
+      inventory_unit_ids: records.map((record) => record.id),
+      seller_ids: sellerIds
     });
   } catch (error) {
     console.error("outbound-search-sku-size failed:", error);
@@ -926,12 +988,8 @@ app.post("/api/submit-outbound", async (req, res) => {
     const shippingLabels = Number(req.body?.shipping_labels) || 0;
     const items = Array.isArray(req.body?.items) ? req.body.items : [];
 
-    if (mode !== "Selling") {
-      return res.status(400).json({ error: "Only Selling is supported right now" });
-    }
-
-    if (!buyerId) {
-      return res.status(400).json({ error: "Missing buyer_id" });
+    if (mode !== "Selling" && mode !== "Forwarding") {
+      return res.status(400).json({ error: "Invalid outbound mode" });
     }
 
     if (!items.length) {
@@ -953,40 +1011,92 @@ app.post("/api/submit-outbound", async (req, res) => {
       return res.status(400).json({ error: "No Inventory Unit record IDs found to submit" });
     }
 
-    // Fetch Buyer ID from external Airtable
-    const externalBuyerRecords = await buyersBase(BUYERS_AIRTABLE_TABLE)
-      .select({
-        fields: ["Buyer ID"],
-        filterByFormula: `RECORD_ID() = '${escapeFormulaValue(buyerId)}'`,
-        maxRecords: 1
-      })
-      .firstPage();
-    
-    const externalBuyer = externalBuyerRecords[0];
-    if (!externalBuyer) {
-      return res.status(400).json({ error: "Selected buyer not found" });
-    }
-    
-    const buyerIdValue = asText(externalBuyer.fields["Buyer ID"]);
-    
-    // Find corresponding buyer in main Airtable
-    const mainBuyerRecord = await findMainBuyerRecordByBuyerId(buyerIdValue);
-    if (!mainBuyerRecord) {
-      return res.status(400).json({
-        error: `No matching buyer found in main Airtable for Buyer ID ${buyerIdValue}`
+    if (mode === "Selling") {
+      if (!buyerId) {
+        return res.status(400).json({ error: "Missing buyer_id" });
+      }
+
+      // Fetch Buyer ID from external Airtable
+      const externalBuyerRecords = await buyersBase(BUYERS_AIRTABLE_TABLE)
+        .select({
+          fields: ["Buyer ID"],
+          filterByFormula: `RECORD_ID() = '${escapeFormulaValue(buyerId)}'`,
+          maxRecords: 1
+        })
+        .firstPage();
+      
+      const externalBuyer = externalBuyerRecords[0];
+      if (!externalBuyer) {
+        return res.status(400).json({ error: "Selected buyer not found" });
+      }
+      
+      const buyerIdValue = asText(externalBuyer.fields["Buyer ID"]);
+      
+      // Find corresponding buyer in main Airtable
+      const mainBuyerRecord = await findMainBuyerRecordByBuyerId(buyerIdValue);
+      if (!mainBuyerRecord) {
+        return res.status(400).json({
+          error: `No matching buyer found in main Airtable for Buyer ID ${buyerIdValue}`
+        });
+      }
+      
+      const createdRecord = await airtable(AIRTABLE_EXTERNAL_SALES_LOG_TABLE).create({
+        "Buyer ID": [mainBuyerRecord.id],
+        "Linked Inventory Units": linkedInventoryUnitIds,
+        "Total Selling Price": totalSellingPrice,
+        "Shipping Costs": shippingCosts,
+        "Amount of Labels": shippingLabels,
+        "Sale Date": new Date().toISOString().split("T")[0]
+      });
+
+      await updateInventoryUnitsToReserved(linkedInventoryUnitIds);
+
+      return res.status(200).json({
+        ok: true,
+        id: createdRecord.id,
+        linked_inventory_units_count: linkedInventoryUnitIds.length
       });
     }
-    
-    const createdRecord = await airtable(AIRTABLE_EXTERNAL_SALES_LOG_TABLE).create({
-      "Buyer ID": [mainBuyerRecord.id],
-      "Linked Inventory Units": linkedInventoryUnitIds,
-      "Total Selling Price": totalSellingPrice,
-      "Shipping Costs": shippingCosts,
-      "Amount of Labels": shippingLabels,
-      "Sale Date": new Date().toISOString().split("T")[0]
-    });
 
-    await updateInventoryUnitsToReserved(linkedInventoryUnitIds);
+    if (shippingLabels > 0 && !buyerId) {
+      return res.status(400).json({ error: "Buyer is required when labels are needed" });
+    }
+
+    const createFields = {
+      "Linked Inventory Units": linkedInventoryUnitIds,
+      "Shipping Costs": shippingCosts,
+      "Amount of Labels": shippingLabels
+    };
+
+    if (buyerId) {
+      const externalBuyerRecords = await buyersBase(BUYERS_AIRTABLE_TABLE)
+        .select({
+          fields: ["Buyer ID"],
+          filterByFormula: `RECORD_ID() = '${escapeFormulaValue(buyerId)}'`,
+          maxRecords: 1
+        })
+        .firstPage();
+
+      const externalBuyer = externalBuyerRecords[0];
+      if (!externalBuyer) {
+        return res.status(400).json({ error: "Selected buyer not found" });
+      }
+
+      const buyerIdValue = asText(externalBuyer.fields["Buyer ID"]);
+      const mainBuyerRecord = await findMainBuyerRecordByBuyerId(buyerIdValue);
+
+      if (!mainBuyerRecord) {
+        return res.status(400).json({
+          error: `No matching buyer found in main Airtable for Buyer ID ${buyerIdValue}`
+        });
+      }
+
+      createFields["Buyer ID"] = [mainBuyerRecord.id];
+    }
+
+    const createdRecord = await airtable(AIRTABLE_FORWARDING_SERVICE_LOG_TABLE).create(createFields);
+
+    await updateInventoryUnitsToForwardPending(linkedInventoryUnitIds);
 
     return res.status(200).json({
       ok: true,
