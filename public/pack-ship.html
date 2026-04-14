@@ -48,7 +48,7 @@
     }
 
     .wrap {
-      max-width: 1350px;
+      max-width: 1400px;
       margin: 0 auto;
       padding: 110px 20px 60px;
     }
@@ -64,40 +64,51 @@
       font-weight: 800;
     }
 
-    .stack {
-      display: grid;
-      gap: 24px;
-    }
-
-    .shipment-card,
-    .parcel-card {
+    .card {
       background: linear-gradient(180deg, rgba(16,41,68,0.95), rgba(14,34,56,0.95));
       border: 1px solid var(--border);
       border-radius: 18px;
       padding: 20px;
       box-shadow: 0 10px 30px rgba(0,0,0,0.28);
+      margin-bottom: 24px;
     }
 
-    .shipment-header {
-      display: flex;
-      justify-content: space-between;
-      gap: 16px;
-      align-items: start;
-      margin-bottom: 18px;
-    }
-
-    .shipment-title {
-      margin: 0;
+    .card h2 {
+      margin: 0 0 16px;
       font-size: 24px;
       font-weight: 800;
       text-transform: uppercase;
     }
 
-    .shipment-meta {
+    .top-grid {
       display: grid;
-      gap: 6px;
-      color: var(--muted);
+      grid-template-columns: 1.2fr 1fr 1fr auto;
+      gap: 16px;
+      align-items: end;
+    }
+
+    .work-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+      align-items: start;
+    }
+
+    .field-label {
       font-size: 14px;
+      font-weight: 800;
+      margin-bottom: 8px;
+    }
+
+    .input, select {
+      width: 100%;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: rgba(7,17,31,0.7);
+      color: var(--text);
+      padding: 14px;
+      font-size: 15px;
+      outline: none;
     }
 
     .button {
@@ -113,6 +124,7 @@
       display: inline-flex;
       align-items: center;
       justify-content: center;
+      white-space: nowrap;
     }
 
     .button.secondary {
@@ -127,39 +139,23 @@
       flex-wrap: wrap;
     }
 
-    .parcel-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-      gap: 18px;
-      margin-top: 18px;
+    .scan-hidden {
+      position: absolute;
+      left: -9999px;
+      width: 1px;
+      height: 1px;
+      opacity: 0;
+      pointer-events: none;
     }
 
-    .field-label {
-      font-size: 14px;
-      font-weight: 800;
-      margin-bottom: 8px;
-    }
-
-    .input {
-      width: 100%;
-      border-radius: 12px;
-      border: 1px solid var(--border);
-      background: rgba(7,17,31,0.7);
-      color: var(--text);
-      padding: 14px;
-      font-size: 15px;
-      outline: none;
-    }
-
-    .parcel-items {
-      margin-top: 16px;
+    .list-box {
       border: 1px solid var(--border);
       border-radius: 14px;
       background: rgba(7,17,31,0.35);
       overflow: hidden;
     }
 
-    .parcel-item {
+    .list-row {
       display: grid;
       grid-template-columns: 1fr auto;
       gap: 12px;
@@ -168,8 +164,14 @@
       font-size: 14px;
     }
 
-    .parcel-item:last-child {
+    .list-row:last-child {
       border-bottom: none;
+    }
+
+    .list-row .meta {
+      color: var(--muted);
+      font-size: 13px;
+      margin-top: 4px;
     }
 
     .empty {
@@ -178,31 +180,39 @@
       font-size: 14px;
     }
 
-    .shipment-summary {
+    .tracking-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
       margin-top: 18px;
-      padding: 16px;
-      border-radius: 14px;
+    }
+
+    .tracking-card {
       border: 1px solid var(--border);
+      border-radius: 14px;
       background: rgba(7,17,31,0.35);
-      white-space: pre-wrap;
-      font-size: 14px;
-      color: var(--text);
+      overflow: hidden;
+    }
+
+    .tracking-head {
+      padding: 14px;
+      border-bottom: 1px solid rgba(22,50,82,0.85);
+      font-weight: 800;
+    }
+
+    .tracking-head.active {
+      background: rgba(47,128,237,0.14);
+    }
+
+    .tracking-items {
+      min-height: 76px;
     }
 
     .actions {
-      margin-top: 18px;
+      margin-top: 20px;
       display: flex;
       justify-content: flex-end;
       gap: 12px;
-    }
-
-    .hidden-scan {
-      position: absolute;
-      left: -9999px;
-      width: 1px;
-      height: 1px;
-      opacity: 0;
-      pointer-events: none;
     }
 
     .toast-stack {
@@ -261,6 +271,21 @@
       from { opacity: 0; transform: translateY(16px); }
       to { opacity: 1; transform: translateY(0); }
     }
+
+    @media (max-width: 980px) {
+      .top-grid,
+      .work-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .actions {
+        justify-content: stretch;
+      }
+
+      .actions .button {
+        width: 100%;
+      }
+    }
   </style>
 </head>
 <body>
@@ -273,16 +298,81 @@
       <h1 class="page-title">Pack & Ship</h1>
     </div>
 
-    <div id="shipmentsContainer" class="stack"></div>
+    <div class="card">
+      <h2>Outbound Selection</h2>
+
+      <div class="top-grid">
+        <div>
+          <div class="field-label">Outbound</div>
+          <select id="outboundSelect">
+            <option value="" selected disabled>Select Outbound</option>
+          </select>
+        </div>
+
+        <div>
+          <div class="field-label">Shipping Status</div>
+          <input id="shippingStatusDisplay" class="input" readonly />
+        </div>
+
+        <div>
+          <div class="field-label">Current Tracking Number</div>
+          <select id="trackingSelect">
+            <option value="" selected disabled>Select Tracking Number</option>
+          </select>
+        </div>
+
+        <div class="button-row">
+          <button id="refocusBtn" class="button secondary" type="button">Refocus</button>
+        </div>
+      </div>
+
+      <div style="margin-top: 16px;">
+        <div class="field-label">Shipping Labels</div>
+        <div id="shippingLabelsWrap" class="button-row"></div>
+      </div>
+
+      <input id="scanInput" class="input scan-hidden" placeholder="Scan GTIN and press Enter" />
+    </div>
+
+    <div class="work-grid">
+      <div class="card">
+        <h2>Items To Pack</h2>
+        <div id="unpackedItems" class="list-box">
+          <div class="empty">Select an outbound first</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Items Per Parcel</h2>
+        <div id="trackingAssignments" class="tracking-grid">
+          <div class="empty">Select an outbound first</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button id="submitBtn" class="button" type="button">Submit</button>
+    </div>
   </div>
 
   <div id="toastStack" class="toast-stack"></div>
 
   <script>
-    const shipmentsContainer = document.getElementById("shipmentsContainer");
+    const outboundSelect = document.getElementById("outboundSelect");
+    const shippingStatusDisplay = document.getElementById("shippingStatusDisplay");
+    const trackingSelect = document.getElementById("trackingSelect");
+    const shippingLabelsWrap = document.getElementById("shippingLabelsWrap");
+    const unpackedItems = document.getElementById("unpackedItems");
+    const trackingAssignments = document.getElementById("trackingAssignments");
+    const scanInput = document.getElementById("scanInput");
+    const refocusBtn = document.getElementById("refocusBtn");
+    const submitBtn = document.getElementById("submitBtn");
     const toastStack = document.getElementById("toastStack");
 
-    let shipments = [];
+    let outboundOptions = [];
+    let currentOutbound = null;
+    let unpacked = [];
+    let assignments = {};
 
     function escapeHtml(value) {
       return String(value ?? "")
@@ -309,144 +399,198 @@
       setTimeout(() => toast.remove(), 3200);
     }
 
-    function buildItemsPerParcelText(shipment) {
-      return shipment.parcels.map((parcel) => {
-        const lines = parcel.scannedItems.map((item) =>
-          `- ${item.productName} | ${item.sku} | ${item.size} | GTIN: ${item.gtin}`
+    function focusScanner() {
+      scanInput.focus();
+    }
+
+    function buildItemsPerParcelText() {
+      if (!currentOutbound) return "";
+
+      return currentOutbound.tracking_numbers.map((trackingNumber) => {
+        const items = assignments[trackingNumber] || [];
+        const lines = items.map((item) =>
+          `- ${item.product_name} | ${item.sku} | ${item.size} | GTIN: ${item.gtin || "—"}`
         );
 
         return [
-          `Tracking Number: ${parcel.trackingNumber}`,
-          ...lines
+          `Tracking Number: ${trackingNumber}`,
+          ...(lines.length ? lines : ["- No items"])
         ].join("\n");
       }).join("\n\n");
     }
 
-    function renderShipments() {
-      if (!shipments.length) {
-        shipmentsContainer.innerHTML = `
-          <div class="shipment-card">
-            <h2 class="shipment-title">No Ready To Ship outbounds</h2>
-          </div>
-        `;
+    function renderUnpacked() {
+      if (!currentOutbound) {
+        unpackedItems.innerHTML = `<div class="empty">Select an outbound first</div>`;
         return;
       }
 
-      shipmentsContainer.innerHTML = shipments.map((shipment, shipmentIndex) => `
-        <div class="shipment-card">
-          <div class="shipment-header">
-            <div>
-              <h2 class="shipment-title">Outbound ${shipment.recordId}</h2>
-              <div class="shipment-meta">
-                <div>Tracking numbers: ${shipment.parcels.length}</div>
-                <div>Expected items: ${shipment.remainingItems.length}</div>
-              </div>
-            </div>
+      if (!unpacked.length) {
+        unpackedItems.innerHTML = `<div class="empty">All items packed</div>`;
+        return;
+      }
 
-            <div class="button-row">
-              ${shipment.shippingLabels.map((file) => `
-                <a class="button secondary" href="${escapeHtml(file.url)}" target="_blank" rel="noopener noreferrer">
-                  Download Label
-                </a>
-              `).join("")}
-            </div>
+      unpackedItems.innerHTML = unpacked.map((item) => `
+        <div class="list-row">
+          <div>
+            <div>${escapeHtml(item.product_name || "Unnamed product")}</div>
+            <div class="meta">${escapeHtml(item.sku)} / ${escapeHtml(item.size)} / ${escapeHtml(item.gtin || "—")}</div>
           </div>
-
-          <div class="parcel-grid">
-            ${shipment.parcels.map((parcel, parcelIndex) => `
-              <div class="parcel-card">
-                <div class="field-label">Tracking Number</div>
-                <div class="input">${escapeHtml(parcel.trackingNumber)}</div>
-
-                <div style="margin-top: 14px;">
-                  <div class="field-label">Scan Product GTIN</div>
-                  <input
-                    class="input"
-                    data-scan-shipment-index="${shipmentIndex}"
-                    data-scan-parcel-index="${parcelIndex}"
-                    placeholder="Scan GTIN and press Enter"
-                  />
-                </div>
-
-                <div class="parcel-items">
-                  ${parcel.scannedItems.length ? parcel.scannedItems.map((item) => `
-                    <div class="parcel-item">
-                      <div>${escapeHtml(item.productName)}<br><span style="color: var(--muted);">${escapeHtml(item.sku)} / ${escapeHtml(item.size)} / ${escapeHtml(item.gtin)}</span></div>
-                      <div>1x</div>
-                    </div>
-                  `).join("") : `<div class="empty">No items scanned for this parcel yet</div>`}
-                </div>
-              </div>
-            `).join("")}
-          </div>
-
-          <div class="shipment-summary">${escapeHtml(buildItemsPerParcelText(shipment) || "No items assigned yet")}</div>
-
-          <div class="actions">
-            <button class="button" type="button" data-submit-shipment-index="${shipmentIndex}">Submit</button>
-          </div>
+          <div>1x</div>
         </div>
       `).join("");
     }
 
-    async function loadShipments() {
-      const response = await fetch("/api/pack-ship-ready");
+    function renderAssignments() {
+      if (!currentOutbound) {
+        trackingAssignments.innerHTML = `<div class="empty">Select an outbound first</div>`;
+        return;
+      }
+
+      trackingAssignments.innerHTML = currentOutbound.tracking_numbers.map((trackingNumber) => {
+        const items = assignments[trackingNumber] || [];
+        const active = trackingSelect.value === trackingNumber;
+
+        return `
+          <div class="tracking-card">
+            <div class="tracking-head ${active ? "active" : ""}">${escapeHtml(trackingNumber)}</div>
+            <div class="tracking-items">
+              ${items.length ? items.map((item) => `
+                <div class="list-row">
+                  <div>
+                    <div>${escapeHtml(item.product_name || "Unnamed product")}</div>
+                    <div class="meta">${escapeHtml(item.sku)} / ${escapeHtml(item.size)} / ${escapeHtml(item.gtin || "—")}</div>
+                  </div>
+                  <div>1x</div>
+                </div>
+              `).join("") : `<div class="empty">No items in this parcel yet</div>`}
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    function renderShippingLabels() {
+      if (!currentOutbound || !currentOutbound.shipping_labels.length) {
+        shippingLabelsWrap.innerHTML = `<span class="empty" style="padding:0;">No shipping labels attached</span>`;
+        return;
+      }
+
+      shippingLabelsWrap.innerHTML = currentOutbound.shipping_labels.map((file, index) => `
+        <a class="button secondary" href="${escapeHtml(file.url)}" target="_blank" rel="noopener noreferrer">
+          Download Label ${index + 1}
+        </a>
+      `).join("");
+    }
+
+    function renderTrackingOptions() {
+      trackingSelect.innerHTML = `<option value="" selected disabled>Select Tracking Number</option>`;
+
+      if (!currentOutbound) return;
+
+      currentOutbound.tracking_numbers.forEach((trackingNumber, index) => {
+        const option = document.createElement("option");
+        option.value = trackingNumber;
+        option.textContent = trackingNumber;
+        trackingSelect.appendChild(option);
+
+        if (index === 0) {
+          trackingSelect.value = trackingNumber;
+        }
+      });
+    }
+
+    async function loadOutboundOptions() {
+      const response = await fetch("/api/pack-ship-outbounds");
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.details || data.error || "Failed to load shipments");
+        throw new Error(data.details || data.error || "Failed to load outbounds");
       }
 
-      shipments = (data.shipments || []).map((shipment) => ({
-        ...shipment,
-        remainingItems: Array.isArray(shipment.items) ? [...shipment.items] : [],
-        parcels: (shipment.parcels || []).map((parcel) => ({
-          ...parcel,
-          scannedItems: []
-        }))
-      }));
+      outboundOptions = Array.isArray(data.outbounds) ? data.outbounds : [];
 
-      renderShipments();
+      outboundSelect.innerHTML = `<option value="" selected disabled>Select Outbound</option>`;
+
+      outboundOptions.forEach((option) => {
+        const el = document.createElement("option");
+        el.value = option.id;
+        el.textContent = option.label;
+        outboundSelect.appendChild(el);
+      });
     }
 
-    async function handleParcelScan(shipmentIndex, parcelIndex, gtin) {
+    async function loadOutboundDetails(outboundId) {
+      const response = await fetch(`/api/pack-ship-outbound/${encodeURIComponent(outboundId)}`);
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.details || data.error || "Failed to load outbound details");
+      }
+
+      currentOutbound = data.outbound;
+      unpacked = Array.isArray(currentOutbound.items) ? [...currentOutbound.items] : [];
+      assignments = {};
+
+      currentOutbound.tracking_numbers.forEach((trackingNumber) => {
+        assignments[trackingNumber] = [];
+      });
+
+      shippingStatusDisplay.value = currentOutbound.shipping_status || "";
+      renderTrackingOptions();
+      renderShippingLabels();
+      renderUnpacked();
+      renderAssignments();
+      focusScanner();
+    }
+
+    function handleScan(gtin) {
+      if (!currentOutbound) {
+        showToast("Select an outbound first.", "warning", "Warning");
+        return;
+      }
+
+      const trackingNumber = trackingSelect.value;
+      if (!trackingNumber) {
+        showToast("Select a tracking number first.", "warning", "Warning");
+        return;
+      }
+
       const cleanGtin = gtin.trim();
       if (!cleanGtin) return;
 
-      const shipment = shipments[shipmentIndex];
-      const parcel = shipment?.parcels?.[parcelIndex];
-      if (!shipment || !parcel) return;
-
-      const itemIndex = shipment.remainingItems.findIndex((item) => item.gtin === cleanGtin);
+      const itemIndex = unpacked.findIndex((item) => item.gtin === cleanGtin);
       if (itemIndex === -1) {
-        showToast("Scanned GTIN is not part of this outbound or already fully assigned.", "warning", "Warning");
-        renderShipments();
+        showToast("This item is not available to pack or is already packed.", "warning", "Warning");
         return;
       }
 
-      const [item] = shipment.remainingItems.splice(itemIndex, 1);
-      parcel.scannedItems.push(item);
+      const [item] = unpacked.splice(itemIndex, 1);
+      assignments[trackingNumber].push(item);
 
-      renderShipments();
-      showToast(`Added ${item.productName} to ${parcel.trackingNumber}.`, "success", "Success");
+      renderUnpacked();
+      renderAssignments();
+      showToast(`Packed ${item.product_name || item.gtin} into ${trackingNumber}.`, "success", "Success");
     }
 
-    async function submitShipment(shipmentIndex) {
-      const shipment = shipments[shipmentIndex];
-      if (!shipment) return;
-
-      if (shipment.remainingItems.length) {
-        showToast("All outbound items must be assigned to a parcel before submitting.", "warning", "Warning");
+    async function submitPackedOutbound() {
+      if (!currentOutbound) {
+        showToast("Select an outbound first.", "warning", "Warning");
         return;
       }
 
-      const itemsPerParcel = buildItemsPerParcelText(shipment);
+      if (unpacked.length) {
+        showToast("All items must be packed before submitting.", "warning", "Warning");
+        return;
+      }
+
+      const itemsPerParcel = buildItemsPerParcelText();
 
       const response = await fetch("/api/submit-pack-ship", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          outbound_id: shipment.recordId,
+          outbound_id: currentOutbound.id,
           items_per_parcel: itemsPerParcel
         })
       });
@@ -457,43 +601,70 @@
         throw new Error(data.details || data.error || "Failed to submit pack & ship");
       }
 
-      showToast("Shipment marked as shipped.", "success", "Success");
-      shipments.splice(shipmentIndex, 1);
-      renderShipments();
+      showToast("Outbound marked as shipped.", "success", "Success");
+      currentOutbound = null;
+      unpacked = [];
+      assignments = {};
+      shippingStatusDisplay.value = "";
+      trackingSelect.innerHTML = `<option value="" selected disabled>Select Tracking Number</option>`;
+      shippingLabelsWrap.innerHTML = "";
+      renderUnpacked();
+      renderAssignments();
+      await loadOutboundOptions();
+      outboundSelect.value = "";
     }
 
-    shipmentsContainer.addEventListener("keydown", async (event) => {
-      const input = event.target;
-      if (!(input instanceof HTMLInputElement)) return;
+    outboundSelect.addEventListener("change", async () => {
+      try {
+        await loadOutboundDetails(outboundSelect.value);
+      } catch (error) {
+        showToast(error.message, "error", "Error");
+      }
+    });
+
+    trackingSelect.addEventListener("change", () => {
+      renderAssignments();
+      focusScanner();
+    });
+
+    refocusBtn.addEventListener("click", () => {
+      focusScanner();
+      showToast("Scanner refocused.", "success", "Success");
+    });
+
+    scanInput.addEventListener("keydown", (event) => {
       if (event.key !== "Enter") return;
-      if (!input.dataset.scanShipmentIndex) return;
-
       event.preventDefault();
+      handleScan(scanInput.value);
+      scanInput.value = "";
+    });
 
+    submitBtn.addEventListener("click", async () => {
       try {
-        await handleParcelScan(
-          Number(input.dataset.scanShipmentIndex),
-          Number(input.dataset.scanParcelIndex),
-          input.value
-        );
-        input.value = "";
+        await submitPackedOutbound();
       } catch (error) {
         showToast(error.message, "error", "Error");
       }
     });
 
-    shipmentsContainer.addEventListener("click", async (event) => {
-      const button = event.target.closest("[data-submit-shipment-index]");
-      if (!button) return;
+    document.addEventListener("click", (event) => {
+      const target = event.target;
 
-      try {
-        await submitShipment(Number(button.dataset.submitShipmentIndex));
-      } catch (error) {
-        showToast(error.message, "error", "Error");
+      const clickedInsideEditableField =
+        target === outboundSelect ||
+        target === trackingSelect ||
+        target === scanInput ||
+        target.closest?.(".button") ||
+        target.closest?.(".toast") ||
+        target.closest?.(".home-button") ||
+        target.closest?.("select");
+
+      if (!clickedInsideEditableField && currentOutbound) {
+        focusScanner();
       }
     });
 
-    loadShipments().catch((error) => {
+    loadOutboundOptions().catch((error) => {
       showToast(error.message, "error", "Error");
     });
   </script>
