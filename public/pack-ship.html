@@ -617,12 +617,18 @@
 
       const itemsPerParcel = buildItemsPerParcelText();
 
+      const packedInventoryUnitIds = Object.values(assignments)
+        .flat()
+        .map((item) => item.id)
+        .filter(Boolean);
+
       const response = await fetch("/api/submit-pack-ship", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           outbound_id: currentOutbound.id,
-          items_per_parcel: itemsPerParcel
+          items_per_parcel: itemsPerParcel,
+          packed_inventory_unit_ids: packedInventoryUnitIds
         })
       });
 
