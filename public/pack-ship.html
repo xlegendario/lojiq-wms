@@ -431,6 +431,22 @@
       return Array.from(grouped.values());
     }
 
+    function buildItemsPerParcelText() {
+      if (!currentOutbound) return "";
+
+      return currentOutbound.tracking_numbers.map((trackingNumber) => {
+        const items = groupItems(assignments[trackingNumber] || []);
+        const lines = items.map((item) =>
+          `- ${item.quantity}x ${item.product_name} | ${item.sku} | ${item.size} | GTIN: ${item.gtin || "—"}`
+        );
+
+        return [
+          `Tracking Number: ${trackingNumber}`,
+          ...(lines.length ? lines : ["- No items"])
+        ].join("\n");
+      }).join("\n\n");
+    }
+
     function renderUnpacked() {
       if (!currentOutbound) {
         unpackedItems.innerHTML = `<div class="empty">Select an outbound first</div>`;
