@@ -607,8 +607,6 @@ app.post("/api/submit-pack-ship", async (req, res) => {
 });
 
 app.get("/api/outbound-buyers", async (_req, res) => {
-
-app.get("/api/outbound-buyers", async (_req, res) => {
   try {
     const options = await getBuyerOptions();
 
