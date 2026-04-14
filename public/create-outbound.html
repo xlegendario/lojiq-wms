@@ -292,6 +292,32 @@
       opacity: 0;
       pointer-events: none;
     }
+
+    .delete-btn {
+      width: 40px;
+      height: 40px;
+      border-radius: 10px;
+      border: 1px solid rgba(240, 68, 56, 0.35);
+      background: rgba(240, 68, 56, 0.10);
+      color: #ff9b95;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: 0.2s ease;
+    }
+
+    .delete-btn:hover {
+      background: rgba(240, 68, 56, 0.18);
+      border-color: rgba(240, 68, 56, 0.6);
+      transform: translateY(-1px);
+    }
+
+    .delete-icon {
+      width: 18px;
+      height: 18px;
+      display: block;
+    }
     /* Remove number input spinners (Chrome, Edge, Safari, Opera) */
     input[type="number"]::-webkit-outer-spin-button,
     input[type="number"]::-webkit-inner-spin-button {
@@ -461,6 +487,7 @@
                 <th>Quantity</th>
                 <th>Unit Price</th>
                 <th>Total Price</th>
+                <th></th>
               </tr>
             </thead>
             <tbody id="itemsTableBody">
@@ -707,7 +734,7 @@
 
     function renderTable() {
       if (!items.length) {
-        itemsTableBody.innerHTML = `<tr><td colspan="8" class="empty">No products added yet</td></tr>`;
+        itemsTableBody.innerHTML = `<tr><td colspan="9" class="empty">No products added yet</td></tr>`;
         renderSummaryTotals();
         return;
       }
@@ -732,6 +759,13 @@
           </td>
           <td>${item.unitPrice.toFixed(2)}</td>
           <td>${(item.unitPrice * item.quantity).toFixed(2)}</td>
+          <td>
+            <button class="delete-btn" type="button" data-delete-index="${index}" aria-label="Delete item">
+              <svg class="delete-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+                <path d="M9 3.75h6m-9 3h12m-1.5 0-.526 10.515A2.25 2.25 0 0 1 13.728 19.5h-3.456a2.25 2.25 0 0 1-2.246-2.235L7.5 6.75m3 3v5.25m3-5.25v5.25" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+          </td>
         </tr>
       `).join("");
 
@@ -935,29 +969,18 @@
       }
     });
 
-    itemsTableBody.addEventListener("input", (event) => {
-      const target = event.target;
-      if (!(target instanceof HTMLInputElement)) return;
+    itemsTableBody.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-delete-index]");
+      if (!button) return;
 
-      const index = Number(target.dataset.index);
-      const field = target.dataset.field;
-
+      const index = Number(button.dataset.deleteIndex);
       if (!Number.isInteger(index) || !items[index]) return;
-      if (field !== "quantity") return;
 
-      const parsed = Number(target.value);
-      const max = items[index].availableQuantity;
-
-      if (!Number.isFinite(parsed) || parsed < 1) {
-        items[index].quantity = 1;
-      } else if (parsed > max) {
-        items[index].quantity = max;
-        showToast("You cannot exceed available stock.", "warning", "Warning");
-      } else {
-        items[index].quantity = Math.floor(parsed);
-      }
-
+      const removed = items[index];
+      items.splice(index, 1);
       renderTable();
+      showToast(`Removed ${removed.productName}.`, "success", "Success");
+      scanInput.focus();
     });
 
     shippingLabelsInput.addEventListener("input", renderSummaryTotals);
