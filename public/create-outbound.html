@@ -760,9 +760,13 @@
           <td>${item.unitPrice.toFixed(2)}</td>
           <td>${(item.unitPrice * item.quantity).toFixed(2)}</td>
           <td>
-            <button class="delete-btn" type="button" data-delete-index="${index}" aria-label="Delete item">
+            <button class="delete-btn" type="button" data-delete-index="${index}" aria-label="Delete row">
               <svg class="delete-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
-                <path d="M9 3.75h6m-9 3h12m-1.5 0-.526 10.515A2.25 2.25 0 0 1 13.728 19.5h-3.456a2.25 2.25 0 0 1-2.246-2.235L7.5 6.75m3 3v5.25m3-5.25v5.25" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M4 7H20" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+                <path d="M9 7V5.8C9 5.35817 9.35817 5 9.8 5H14.2C14.6418 5 15 5.35817 15 5.8V7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+                <path d="M18 7L17.2 18.2C17.1418 19.0146 16.4639 19.645 15.6472 19.645H8.35284C7.53607 19.645 6.85824 19.0146 6.80004 18.2L6 7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+                <path d="M10 11V16" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+                <path d="M14 11V16" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
               </svg>
             </button>
           </td>
