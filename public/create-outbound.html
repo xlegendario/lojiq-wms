@@ -515,13 +515,13 @@
               <input id="shippingCostsInput" class="input summary-line-input" type="number" min="0" step="1" />
             </div>
         
-            <div class="summary-line">
-              <span class="summary-line-label">Total Selling Price:</span>
-              <input id="totalSellingPriceInput" class="input summary-line-input" type="number" min="0" step="0.5" />
+            <div class="summary-line" id="totalSellingPriceRow">
+              <span class="summary-line-label" id="totalSellingPriceLabel">Total Selling Price:</span>
+              <input id="totalSellingPriceInput" class="input summary-line-input" type="number" min="0" step="0.01" />
             </div>
         
-            <div class="summary-line result-line">
-              <span class="summary-line-label">Result:</span>
+            <div class="summary-line result-line" id="resultRow">
+              <span class="summary-line-label" id="resultLabel">Result:</span>
               <span id="resultValue" class="summary-line-value">€0.00</span>
             </div>
           </div>
@@ -566,6 +566,10 @@
     const shippingCostsInput = document.getElementById("shippingCostsInput");
     const itemsTotalValue = document.getElementById("itemsTotalValue");
     const resultValue = document.getElementById("resultValue");
+    const totalSellingPriceRow = document.getElementById("totalSellingPriceRow");
+    const totalSellingPriceLabel = document.getElementById("totalSellingPriceLabel");
+    const resultRow = document.getElementById("resultRow");
+    const resultLabel = document.getElementById("resultLabel");
     const toastStack = document.getElementById("toastStack");
 
     let outboundMode = "Selling";
@@ -711,23 +715,48 @@
     function getItemsTotal() {
       return items.reduce((sum, item) => sum + (item.unitPrice * item.quantity), 0);
     }
+    
+    function syncModeUI() {
+      if (outboundMode === "Selling") {
+        sellingBtn.className = "button mode-button";
+        forwardingBtn.className = "button secondary mode-button";
+        totalSellingPriceLabel.textContent = "Total Selling Price:";
+        resultLabel.textContent = "Result:";
+        totalSellingPriceRow.style.display = "";
+        resultRow.style.display = "";
+      } else {
+        sellingBtn.className = "button secondary mode-button";
+        forwardingBtn.className = "button mode-button";
+        totalSellingPriceLabel.textContent = "Forwarding Total:";
+        resultLabel.textContent = "Total:";
+        totalSellingPriceRow.style.display = "none";
+        resultRow.style.display = "";
+      }
+    }    
 
     function renderSummaryTotals() {
       const itemsTotal = getItemsTotal();
       const shippingCosts = Number(shippingCostsInput.value) || 0;
       const totalSellingPrice = Number(totalSellingPriceInput.value) || 0;
-      const result = totalSellingPrice - itemsTotal - shippingCosts;
     
       itemsTotalValue.textContent = `€${itemsTotal.toFixed(2)}`;
     
-      if (result > 0) {
-        resultValue.textContent = `+€${result.toFixed(2)}`;
-        resultValue.className = "summary-line-value result-positive";
-      } else if (result < 0) {
-        resultValue.textContent = `-€${Math.abs(result).toFixed(2)}`;
-        resultValue.className = "summary-line-value result-negative";
+      if (outboundMode === "Selling") {
+        const result = totalSellingPrice - itemsTotal - shippingCosts;
+
+        if (result > 0) {
+          resultValue.textContent = `+€${result.toFixed(2)}`;
+          resultValue.className = "summary-line-value result-positive";
+        } else if (result < 0) {
+          resultValue.textContent = `-€${Math.abs(result).toFixed(2)}`;
+          resultValue.className = "summary-line-value result-negative";
+        } else {
+          resultValue.textContent = `€0.00`;
+          resultValue.className = "summary-line-value";
+        }
       } else {
-        resultValue.textContent = `€0.00`;
+        const total = itemsTotal + shippingCosts;
+        resultValue.textContent = `€${total.toFixed(2)}`;
         resultValue.className = "summary-line-value";
       }
     }
@@ -798,7 +827,8 @@
         availableQuantity: data.available_quantity,
         quantity: 1,
         unitPrice: Number(data.unit_price) || 0,
-        inventoryUnitIds: Array.isArray(data.inventory_unit_ids) ? data.inventory_unit_ids : []
+        inventoryUnitIds: Array.isArray(data.inventory_unit_ids) ? data.inventory_unit_ids : [],
+        sellerIds: Array.isArray(data.seller_ids) ? data.seller_ids : []
       });
 
       renderTable();
@@ -808,7 +838,7 @@
       const response = await fetch("/api/outbound-lookup-gtin", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ gtin })
+        body: JSON.stringify({ gtin, mode: outboundMode })
       });
 
       const data = await response.json();
@@ -842,7 +872,7 @@
       const response = await fetch("/api/outbound-search-sku-size", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sku, size })
+        body: JSON.stringify({ sku, size, mode: outboundMode })
       });
     
       const data = await response.json();
@@ -904,6 +934,7 @@
 
     function resetPage() {
       items = [];
+      outboundMode = "Selling";
       scanInput.value = "";
       manualSkuInput.value = "";
       manualSizeInput.value = "";
@@ -914,18 +945,21 @@
       buyerDetails.className = "buyer-details";
       buyerDetails.innerHTML = "";
       toggleBuyerForm(false);
+      syncModeUI();
       renderTable();
       scanInput.focus();
     }
 
     sellingBtn.addEventListener("click", () => {
       outboundMode = "Selling";
-      sellingBtn.className = "button mode-button";
-      forwardingBtn.className = "button secondary mode-button";
+      syncModeUI();
+      renderSummaryTotals();
     });
 
     forwardingBtn.addEventListener("click", () => {
-      showToast("Forwarding is not built yet.", "warning", "Warning");
+      outboundMode = "Forwarding";
+      syncModeUI();
+      renderSummaryTotals();
     });
 
     addBuyerBtn.addEventListener("click", () => {
@@ -992,39 +1026,37 @@
     totalSellingPriceInput.addEventListener("input", renderSummaryTotals);
 
     submitBtn.addEventListener("click", async () => {
-      if (outboundMode !== "Selling") {
-        showToast("Only Selling is built right now.", "warning", "Warning");
-        return;
-      }
-
-      if (!buyerSelect.value) {
-        showToast("Please select a Buyer before submitting.", "warning", "Warning");
-        return;
-      }
-
       if (!items.length) {
         showToast("Please add at least one product.", "warning", "Warning");
         return;
       }
 
       const shippingLabelsValue = Number(shippingLabelsInput.value);
-      
-      if (
-        shippingLabelsInput.value === "" ||
-        Number.isNaN(shippingLabelsValue) ||
-        shippingLabelsValue < 0
-      ) {
+
+      if (shippingLabelsInput.value === "" || Number.isNaN(shippingLabelsValue) || shippingLabelsValue < 0) {
         showToast("Please fill Shipping Labels Needed.", "warning", "Warning");
         return;
       }
 
-      if (!totalSellingPriceInput.value) {
-        showToast("Please fill Total Selling Price.", "warning", "Warning");
+      if (shippingCostsInput.value === "") {
+        showToast("Please fill Shipping Costs.", "warning", "Warning");
         return;
       }
 
-      if (!shippingCostsInput.value) {
-        showToast("Please fill Shipping Costs.", "warning", "Warning");
+      if (outboundMode === "Selling") {
+        if (!buyerSelect.value) {
+          showToast("Please select a Buyer before submitting.", "warning", "Warning");
+          return;
+        }
+
+        if (!totalSellingPriceInput.value) {
+          showToast("Please fill Total Selling Price.", "warning", "Warning");
+          return;
+        }
+      }
+
+      if (outboundMode === "Forwarding" && shippingLabelsValue > 0 && !buyerSelect.value) {
+        showToast("Please select a Buyer when labels are needed.", "warning", "Warning");
         return;
       }
 
@@ -1037,26 +1069,34 @@
             buyer_id: buyerSelect.value,
             total_selling_price: Number(totalSellingPriceInput.value) || 0,
             shipping_costs: Number(shippingCostsInput.value) || 0,
-            shipping_labels: Number(shippingLabelsInput.value) || 0,
+            shipping_labels: shippingLabelsValue,
             items: items.map((item) => ({
               quantity: item.quantity,
-              inventory_unit_ids: item.inventoryUnitIds
+              inventory_unit_ids: item.inventoryUnitIds,
+              seller_ids: item.sellerIds
             }))
           })
         });
-
+        
         const data = await response.json();
 
         if (!response.ok) {
           throw new Error(data.details || data.error || "Failed to submit outbound");
         }
 
-        showToast("Outbound created successfully.", "success", "Success");
+        showToast(
+          outboundMode === "Selling"
+            ? "Outbound created successfully."
+            : "Forwarding outbound created successfully.",
+          "success",
+          "Success"
+        );
         resetPage();
       } catch (error) {
         showToast(error.message, "error", "Error");
       }
     });
+    syncModeUI();
     renderTable();
 
     Promise.all([loadBuyers(), loadBuyerCountryOptions()])
