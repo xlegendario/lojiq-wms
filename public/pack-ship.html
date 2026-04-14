@@ -403,20 +403,32 @@
       scanInput.focus();
     }
 
-    function buildItemsPerParcelText() {
-      if (!currentOutbound) return "";
+    function getItemGroupKey(item) {
+      return [
+        item.product_name || "",
+        item.sku || "",
+        item.size || "",
+        item.gtin || ""
+      ].join("||");
+    }
 
-      return currentOutbound.tracking_numbers.map((trackingNumber) => {
-        const items = assignments[trackingNumber] || [];
-        const lines = items.map((item) =>
-          `- ${item.product_name} | ${item.sku} | ${item.size} | GTIN: ${item.gtin || "—"}`
-        );
+    function groupItems(items) {
+      const grouped = new Map();
 
-        return [
-          `Tracking Number: ${trackingNumber}`,
-          ...(lines.length ? lines : ["- No items"])
-        ].join("\n");
-      }).join("\n\n");
+      for (const item of items || []) {
+        const key = getItemGroupKey(item);
+
+        if (!grouped.has(key)) {
+          grouped.set(key, {
+            ...item,
+            quantity: 0
+          });
+        }
+
+        grouped.get(key).quantity += 1;
+      }
+
+      return Array.from(grouped.values());
     }
 
     function renderUnpacked() {
@@ -430,13 +442,15 @@
         return;
       }
 
-      unpackedItems.innerHTML = unpacked.map((item) => `
+      const groupedItems = groupItems(unpacked);
+
+      unpackedItems.innerHTML = groupedItems.map((item) => `
         <div class="list-row">
           <div>
             <div>${escapeHtml(item.product_name || "Unnamed product")}</div>
             <div class="meta">${escapeHtml(item.sku)} / ${escapeHtml(item.size)} / ${escapeHtml(item.gtin || "—")}</div>
           </div>
-          <div>1x</div>
+          <div>${item.quantity}x</div>
         </div>
       `).join("");
     }
@@ -449,19 +463,20 @@
 
       trackingAssignments.innerHTML = currentOutbound.tracking_numbers.map((trackingNumber) => {
         const items = assignments[trackingNumber] || [];
+        const groupedItems = groupItems(items);
         const active = trackingSelect.value === trackingNumber;
 
         return `
           <div class="tracking-card">
             <div class="tracking-head ${active ? "active" : ""}">${escapeHtml(trackingNumber)}</div>
             <div class="tracking-items">
-              ${items.length ? items.map((item) => `
+              ${groupedItems.length ? groupedItems.map((item) => `
                 <div class="list-row">
                   <div>
                     <div>${escapeHtml(item.product_name || "Unnamed product")}</div>
                     <div class="meta">${escapeHtml(item.sku)} / ${escapeHtml(item.size)} / ${escapeHtml(item.gtin || "—")}</div>
                   </div>
-                  <div>1x</div>
+                  <div>${item.quantity}x</div>
                 </div>
               `).join("") : `<div class="empty">No items in this parcel yet</div>`}
             </div>
