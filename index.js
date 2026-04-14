@@ -835,7 +835,7 @@ app.post("/api/submit-outbound", async (req, res) => {
       "Linked Inventory Units": linkedInventoryUnitIds,
       "Total Selling Price": totalSellingPrice,
       "Shipping Costs": shippingCosts,
-      "Shipping Labels": shippingLabels,
+      "Amount of Labels": shippingLabels,
       "Sale Date": new Date().toISOString().split("T")[0]
     });
 
