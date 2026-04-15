@@ -267,8 +267,11 @@
     
     .summary-line-input {
       width: 140px;
+      min-width: 140px;
       max-width: 140px;
+      margin-left: auto;
       text-align: right;
+      flex: 0 0 140px;
     }
     
     .result-line {
@@ -485,8 +488,8 @@
                 <th>Size</th>
                 <th>Available</th>
                 <th>Quantity</th>
-                <th>Unit Price</th>
-                <th>Total Price</th>
+                <th id="unitPriceHeader">Unit Price</th>
+                <th id="totalPriceHeader">Total Price</th>
                 <th></th>
               </tr>
             </thead>
@@ -570,6 +573,8 @@
     const totalSellingPriceLabel = document.getElementById("totalSellingPriceLabel");
     const resultRow = document.getElementById("resultRow");
     const resultLabel = document.getElementById("resultLabel");
+    const unitPriceHeader = document.getElementById("unitPriceHeader");
+    const totalPriceHeader = document.getElementById("totalPriceHeader");
     const toastStack = document.getElementById("toastStack");
 
     let outboundMode = "Selling";
@@ -722,6 +727,8 @@
         forwardingBtn.className = "button secondary mode-button";
         totalSellingPriceLabel.textContent = "Total Selling Price:";
         resultLabel.textContent = "Result:";
+        unitPriceHeader.textContent = "Unit Price";
+        totalPriceHeader.textContent = "Total Price";
         totalSellingPriceRow.style.display = "";
         resultRow.style.display = "";
       } else {
@@ -729,10 +736,12 @@
         forwardingBtn.className = "button mode-button";
         totalSellingPriceLabel.textContent = "Forwarding Total:";
         resultLabel.textContent = "Total:";
+        unitPriceHeader.textContent = "Unit Fee";
+        totalPriceHeader.textContent = "Total Fee";
         totalSellingPriceRow.style.display = "none";
         resultRow.style.display = "";
       }
-    }    
+    }
 
     function renderSummaryTotals() {
       const itemsTotal = getItemsTotal();
