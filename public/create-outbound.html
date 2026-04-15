@@ -901,7 +901,13 @@
         if (data.reason === "unknown_gtin") {
           showToast("Product GTIN unknown in Inventory.", "warning", "Warning");
         } else if (data.reason === "no_available_items") {
-          showToast("There are no available items from this product.", "warning", "Warning");
+          showToast(
+            outboundMode === "Forwarding"
+              ? "There are no Ready to Forward items for this product from the selected seller."
+              : "There are no available items from this product.",
+            "warning",
+            "Warning"
+          );
         }
         return;
       }
@@ -942,7 +948,13 @@
       }
     
       if (!data.found) {
-        showToast("No available products found for this SKU and Size.", "warning", "Warning");
+        showToast(
+          outboundMode === "Forwarding"
+            ? "No Ready to Forward products found for this SKU and Size from the selected seller."
+            : "No available products found for this SKU and Size.",
+          "warning",
+          "Warning"
+        );
         return;
       }
     
