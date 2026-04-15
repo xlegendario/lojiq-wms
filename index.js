@@ -307,11 +307,16 @@ async function createSendcloudLabel({
 
   const parcel = body?.parcel || {};
 
-  const labelUrl =
+  const rawLabelUrl =
     asText(parcel?.label?.normal_printer) ||
     asText(parcel?.label?.label_printer) ||
     asText(parcel?.label_url) ||
     "";
+
+  const labelUrl = rawLabelUrl
+    .split(",")
+    .map((part) => asText(part))
+    .filter(Boolean)[0] || "";
 
   const trackingNumber =
     asText(parcel?.tracking_number) ||
@@ -677,6 +682,13 @@ async function getBuyerOptions() {
       }
     }))
     .filter((option) => option.label);
+}
+
+async function markUnfulfilledOrderLabelError(recordId, errorMessage) {
+  await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).update(recordId, {
+    "Fulfillment Status": "Label Error",
+    "Label Error Message": asText(errorMessage)
+  });
 }
 
 async function getBuyerCountryOptions() {
@@ -1053,6 +1065,9 @@ app.post("/api/submit-inbound", async (req, res) => {
 });
 
 app.post("/api/receive-parcel", async (req, res) => {
+  let matchedOrderRecordId = "";
+  let matchedOrderId = "";
+
   try {
     const trackingNumber = asText(req.body?.tracking_number);
 
@@ -1093,6 +1108,7 @@ app.post("/api/receive-parcel", async (req, res) => {
           "GOAT Tracking Number",
           "Client",
           "Shopify Order ID",
+          "Shopify Order Number",
           "Store Name",
           "Shipping Label",
           "Tracking Number"
@@ -1118,16 +1134,17 @@ app.post("/api/receive-parcel", async (req, res) => {
         });
       }
 
-      // For now handle the first matching order safely
+      // Only process first match safely
       const orderRecord = unfulfilledRecords[0];
       const orderFields = orderRecord.fields || {};
       const orderId = asText(orderFields["Order ID"]) || orderRecord.id;
 
+      matchedOrderRecordId = orderRecord.id;
+      matchedOrderId = orderId;
+
       const clientId = first(orderFields["Client"]);
       if (!clientId) {
-        return res.status(400).json({
-          error: `The Order ${orderId} has no linked Client`
-        });
+        throw new Error(`The Order ${orderId} has no linked Client`);
       }
 
       const merchantRecord = await airtable(AIRTABLE_MERCHANTS_TABLE).find(clientId);
@@ -1137,7 +1154,8 @@ app.post("/api/receive-parcel", async (req, res) => {
 
       if (!labelsOnContract) {
         await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).update(orderRecord.id, {
-          "Fulfillment Status": "Requested Label"
+          "Fulfillment Status": "Requested Label",
+          "Label Error Message": null
         });
 
         return res.status(200).json({
@@ -1155,6 +1173,7 @@ app.post("/api/receive-parcel", async (req, res) => {
       const accessToken = asText(merchantFields["Shopify Token"]);
       const shopifyOrderId = asText(orderFields["Shopify Order ID"]);
       const storeName = asText(orderFields["Store Name"]) || asText(merchantFields["Store Name"]);
+      const shopifyOrderNumber = asText(orderFields["Shopify Order Number"]);
 
       if (!shopDomain) {
         throw new Error(`Missing Shopify Store URL for merchant linked to order ${orderId}`);
@@ -1179,13 +1198,9 @@ app.post("/api/receive-parcel", async (req, res) => {
       if (!customerAddress.houseNumber) {
         throw new Error(`Customer address is missing a detectable house number for order ${orderId}`);
       }
-      
+
       const shippingOptionCode = await getOutboundShippingOptionCode(customerAddress.country);
 
-      const shopifyOrderNumber =
-        asText(shopifyOrder.order_number) ||
-        asText(shopifyOrder.name).replace("#", "");
-      
       const sendcloud = await createSendcloudLabel({
         customerAddress,
         shippingOptionCode,
@@ -1212,7 +1227,8 @@ app.post("/api/receive-parcel", async (req, res) => {
             url: uploadedPdfUrl,
             filename: `${sanitizeFileName(orderId)}.pdf`
           }
-        ]
+        ],
+        "Label Error Message": null
       });
 
       return res.status(200).json({
@@ -1236,8 +1252,19 @@ app.post("/api/receive-parcel", async (req, res) => {
     });
   } catch (error) {
     console.error(error);
+
+    if (matchedOrderRecordId) {
+      try {
+        await markUnfulfilledOrderLabelError(matchedOrderRecordId, error.message);
+      } catch (updateError) {
+        console.error("Failed to write label error back to Airtable:", updateError);
+      }
+    }
+
     return res.status(500).json({
-      error: "Failed to process parcel",
+      error: matchedOrderId
+        ? `Label generation failed for ${matchedOrderId}`
+        : "Failed to process parcel",
       details: error.message
     });
   }
