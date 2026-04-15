@@ -968,7 +968,8 @@ app.post("/api/outbound-search-sku-size", async (req, res) => {
       unit_price: averagePrice,
       total_available_price: totalPrice,
       inventory_unit_ids: records.map((record) => record.id),
-      seller_ids: sellerIds
+      seller_ids: item.sellerIds,
+      unit_forwarding_fee: item.unitPrice
     });
   } catch (error) {
     console.error("outbound-search-sku-size failed:", error);
@@ -1062,10 +1063,19 @@ app.post("/api/submit-outbound", async (req, res) => {
       return res.status(400).json({ error: "Buyer is required when labels are needed" });
     }
 
+    const forwardingUnitFees = items
+      .map((item) => Number(item?.unit_forwarding_fee))
+      .filter((value) => Number.isFinite(value));
+
+    const averageForwardingFee = forwardingUnitFees.length
+      ? forwardingUnitFees.reduce((sum, value) => sum + value, 0) / forwardingUnitFees.length
+      : 0;
+
     const createFields = {
       "Linked Inventory Units": linkedInventoryUnitIds,
       "Shipping Costs": shippingCosts,
-      "Amount of Labels": shippingLabels
+      "Amount of Labels": shippingLabels,
+      "Unit Forwarding Fee": averageForwardingFee
     };
 
     if (buyerId) {
