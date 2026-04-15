@@ -74,6 +74,23 @@ async function updateInventoryUnitsToForwardPending(recordIds) {
   }
 }
 
+async function updateInventoryUnitsToReserved(recordIds) {
+  const uniqueIds = [...new Set((recordIds || []).filter(Boolean))];
+
+  for (let i = 0; i < uniqueIds.length; i += 10) {
+    const batch = uniqueIds.slice(i, i + 10);
+
+    await airtable(AIRTABLE_INVENTORY_UNITS_TABLE).update(
+      batch.map((id) => ({
+        id,
+        fields: {
+          "Availability Status": "Reserved"
+        }
+      }))
+    );
+  }
+}
+
 async function getAverageForwardingFeeForSellerIds(sellerIds) {
   const uniqueSellerIds = [...new Set((sellerIds || []).filter(Boolean))];
   if (!uniqueSellerIds.length) return 0;
@@ -968,8 +985,8 @@ app.post("/api/outbound-search-sku-size", async (req, res) => {
       unit_price: averagePrice,
       total_available_price: totalPrice,
       inventory_unit_ids: records.map((record) => record.id),
-      seller_ids: item.sellerIds,
-      unit_forwarding_fee: item.unitPrice
+      seller_ids: sellerIds,
+      unit_forwarding_fee: averagePrice
     });
   } catch (error) {
     console.error("outbound-search-sku-size failed:", error);
