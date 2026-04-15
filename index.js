@@ -217,7 +217,7 @@ async function getPackShipOutboundOptions() {
         "Shipping Label"
       ],
       filterByFormula: `AND(
-        {Fulfillment Status} = 'Ready To Ship',
+        {Fulfillment Status} = 'Ready to Ship',
         OR(
           {Shipping Status} = BLANK(),
           TRIM({Shipping Status} & '') = '',
