@@ -191,7 +191,7 @@ async function getPackShipOutboundOptions() {
   const forwardingRecords = await airtable(AIRTABLE_FORWARDING_SERVICE_LOG_TABLE)
     .select({
       fields: [
-        "Forwarding Service ID",
+        "Forwarding ID",
         "Buyer Name",
         "Shipping Status",
         "Tracking Numbers"
@@ -221,7 +221,7 @@ async function getPackShipOutboundOptions() {
     .map((record) => {
       const shippingStatus = asText(record.fields["Shipping Status"]);
       const trackingNumbers = parseTrackingNumbers(record.fields["Tracking Numbers"]);
-      const forwardingServiceId = asText(record.fields["Forwarding Service ID"]);
+      const forwardingServiceId = asText(record.fields["Forwarding ID"]);
       const buyerName = asText(record.fields["Buyer Name"]);
 
       return {
