@@ -262,6 +262,23 @@ async function getForwardingSellerOptions() {
     .filter((option) => option.label);
 }
 
+async function getForwardingSellerOptions() {
+  const records = await airtable(AIRTABLE_SELLERS_TABLE)
+    .select({
+      fields: ["Full Name", "Supplier/Forwarder?"],
+      filterByFormula: `{Supplier/Forwarder?} = 1`,
+      sort: [{ field: "Full Name", direction: "asc" }]
+    })
+    .all();
+
+  return records
+    .map((record) => ({
+      id: record.id,
+      label: asText(record.fields["Full Name"])
+    }))
+    .filter((option) => option.label);
+}  
+
   const merchantRecords = await airtable(AIRTABLE_MERCHANTS_TABLE)
     .select({
       fields: ["Store Name", "Supplier/Forwarder?"],
