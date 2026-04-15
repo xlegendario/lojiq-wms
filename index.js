@@ -830,18 +830,18 @@ app.post("/api/receive-parcel", async (req, res) => {
         const fulfillmentStatus = asText(record.fields["Fulfillment Status"]);
         return fulfillmentStatus !== "Awaiting Label";
       });
-
+    
       if (nonAwaitingLabelRecord) {
         const orderId = asText(nonAwaitingLabelRecord.fields["Order ID"]) || nonAwaitingLabelRecord.id;
-
+    
         return res.status(400).json({
           error: `The Order ${orderId} might be cancelled or already shipped, check Airtable`
         });
       }
-
+    
       for (let i = 0; i < unfulfilledRecords.length; i += 10) {
         const batch = unfulfilledRecords.slice(i, i + 10);
-
+    
         await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).update(
           batch.map((record) => ({
             id: record.id,
@@ -851,11 +851,15 @@ app.post("/api/receive-parcel", async (req, res) => {
           }))
         );
       }
-
+    
+      const firstOrderId =
+        asText(unfulfilledRecords[0].fields["Order ID"]) || unfulfilledRecords[0].id;
+    
       return res.json({
-        message: "Unfulfilled order updated to Requested Label",
+        message: `Label is requested for ${firstOrderId} successfully`,
         exists: false,
-        matched_unfulfilled_order: true
+        matched_unfulfilled_order: true,
+        order_id: firstOrderId
       });
     }
 
