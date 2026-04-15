@@ -245,6 +245,23 @@ async function getInboundPartyOptions() {
     })
     .all();
 
+async function getForwardingSellerOptions() {
+  const records = await airtable(AIRTABLE_SELLERS_TABLE)
+    .select({
+      fields: ["Full Name", "Supplier/Forwarder?"],
+      filterByFormula: `{Supplier/Forwarder?} = 1`,
+      sort: [{ field: "Full Name", direction: "asc" }]
+    })
+    .all();
+
+  return records
+    .map((record) => ({
+      id: record.id,
+      label: asText(record.fields["Full Name"])
+    }))
+    .filter((option) => option.label);
+}
+
   const merchantRecords = await airtable(AIRTABLE_MERCHANTS_TABLE)
     .select({
       fields: ["Store Name", "Supplier/Forwarder?"],
@@ -716,6 +733,23 @@ app.get("/api/outbound-buyers", async (_req, res) => {
   }
 });
 
+app.get("/api/outbound-forwarding-sellers", async (_req, res) => {
+  try {
+    const options = await getForwardingSellerOptions();
+
+    return res.status(200).json({
+      ok: true,
+      options
+    });
+  } catch (error) {
+    console.error("outbound-forwarding-sellers failed:", error);
+    return res.status(500).json({
+      error: "Failed to load forwarding sellers",
+      details: error.message
+    });
+  }
+});
+
 app.get("/api/outbound-buyer-country-options", async (_req, res) => {
   try {
     const options = await getBuyerCountryOptions();
@@ -840,6 +874,7 @@ app.post("/api/outbound-lookup-gtin", async (req, res) => {
   try {
     const gtin = asText(req.body?.gtin);
     const mode = asText(req.body?.mode) || "Selling";
+    const sellerId = asText(req.body?.seller_id);
 
     if (!gtin) {
       return res.status(400).json({ error: "Missing gtin" });
@@ -848,12 +883,22 @@ app.post("/api/outbound-lookup-gtin", async (req, res) => {
     const safeGtin = escapeFormulaValue(gtin);
     const statusToMatch = mode === "Forwarding" ? "Ready to Forward" : "Available";
 
+    if (mode === "Forwarding" && !sellerId) {
+      return res.status(400).json({ error: "Missing seller_id for forwarding lookup" });
+    }
+
     const records = await airtable(AIRTABLE_INVENTORY_UNITS_TABLE)
       .select({
-        filterByFormula: `AND(
-          TRIM({Product GTIN} & '') = '${safeGtin}',
-          {Availability Status} = '${escapeFormulaValue(statusToMatch)}'
-        )`
+        filterByFormula: mode === "Forwarding"
+          ? `AND(
+              TRIM({Product GTIN} & '') = '${safeGtin}',
+              {Availability Status} = '${escapeFormulaValue(statusToMatch)}',
+              FIND('${escapeFormulaValue(sellerId)}', ARRAYJOIN({Seller ID})) > 0
+            )`
+          : `AND(
+              TRIM({Product GTIN} & '') = '${safeGtin}',
+              {Availability Status} = '${escapeFormulaValue(statusToMatch)}'
+            )`
       })
       .all();
 
@@ -927,6 +972,7 @@ app.post("/api/outbound-search-sku-size", async (req, res) => {
     const sku = asText(req.body?.sku).toUpperCase();
     const size = asText(req.body?.size);
     const mode = asText(req.body?.mode) || "Selling";
+    const sellerId = asText(req.body?.seller_id);
 
     if (!sku || !size) {
       return res.status(400).json({ error: "Missing sku or size" });
@@ -936,13 +982,24 @@ app.post("/api/outbound-search-sku-size", async (req, res) => {
     const safeSize = escapeFormulaValue(size);
     const statusToMatch = mode === "Forwarding" ? "Ready to Forward" : "Available";
 
+    if (mode === "Forwarding" && !sellerId) {
+      return res.status(400).json({ error: "Missing seller_id for forwarding search" });
+    }
+
     const records = await airtable(AIRTABLE_INVENTORY_UNITS_TABLE)
       .select({
-        filterByFormula: `AND(
-          UPPER(TRIM({SKU} & '')) = '${safeSku}',
-          TRIM({Size} & '') = '${safeSize}',
-          {Availability Status} = '${escapeFormulaValue(statusToMatch)}'
-        )`
+        filterByFormula: mode === "Forwarding"
+          ? `AND(
+              UPPER(TRIM({SKU} & '')) = '${safeSku}',
+              TRIM({Size} & '') = '${safeSize}',
+              {Availability Status} = '${escapeFormulaValue(statusToMatch)}',
+              FIND('${escapeFormulaValue(sellerId)}', ARRAYJOIN({Seller ID})) > 0
+            )`
+          : `AND(
+              UPPER(TRIM({SKU} & '')) = '${safeSku}',
+              TRIM({Size} & '') = '${safeSize}',
+              {Availability Status} = '${escapeFormulaValue(statusToMatch)}'
+            )`
       })
       .all();
 
@@ -1001,6 +1058,7 @@ app.post("/api/submit-outbound", async (req, res) => {
   try {
     const mode = asText(req.body?.mode);
     const buyerId = asText(req.body?.buyer_id);
+    const sellerId = asText(req.body?.seller_id);
     const totalSellingPrice = Number(req.body?.total_selling_price) || 0;
     const shippingCosts = Number(req.body?.shipping_costs) || 0;
     const shippingLabels = Number(req.body?.shipping_labels) || 0;
@@ -1074,6 +1132,10 @@ app.post("/api/submit-outbound", async (req, res) => {
         id: createdRecord.id,
         linked_inventory_units_count: linkedInventoryUnitIds.length
       });
+    }
+
+    if (!sellerId) {
+      return res.status(400).json({ error: "Missing seller_id for forwarding" });
     }
 
     if (shippingLabels > 0 && !buyerId) {
