@@ -536,13 +536,8 @@
       trackingSelect.disabled = !!isSinglePackage;
     }    
 
-    async function loadOutboundDetails(outboundId) {
-      const selectedOption = outboundSelect.options[outboundSelect.selectedIndex];
-      const sourceTable = selectedOption?.dataset?.sourceTable || "";
-
-      const response = await fetch(
-        `/api/pack-ship-outbound/${encodeURIComponent(outboundId)}?source_table=${encodeURIComponent(sourceTable)}`
-      );
+    async function loadOutboundOptions() {
+      const response = await fetch("/api/pack-ship-outbounds");
       const data = await response.json();
 
       if (!response.ok) {
