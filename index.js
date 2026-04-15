@@ -309,43 +309,6 @@ async function getPackShipOutboundOptions() {
   return [...salesOptions, ...forwardingOptions, ...Array.from(groupedOrders.values())];
 }
 
-async function getPackShipOutboundDetails(outboundId, sourceTable) {
-  const tableName =
-    sourceTable === "forwarding_service_log"
-      ? AIRTABLE_FORWARDING_SERVICE_LOG_TABLE
-      : AIRTABLE_EXTERNAL_SALES_LOG_TABLE;
-
-  const record = await airtable(tableName).find(outboundId);
-
-  const trackingNumbers = parseTrackingNumbers(record.fields["Tracking Numbers"]);
-  const linkedInventoryUnitIds = Array.isArray(record.fields["Linked Inventory Units"])
-    ? record.fields["Linked Inventory Units"]
-    : [];
-
-  const inventoryUnitRecords = await Promise.all(
-    linkedInventoryUnitIds.map((id) => airtable(AIRTABLE_INVENTORY_UNITS_TABLE).find(id))
-  );
-
-  const items = inventoryUnitRecords.map((itemRecord) => ({
-    id: itemRecord.id,
-    gtin: asText(itemRecord.fields["Product GTIN"]),
-    product_name: asText(itemRecord.fields["Product Name"]),
-    sku: asText(itemRecord.fields["SKU"]),
-    size: asText(itemRecord.fields["Size"])
-  }));
-
-  return {
-    id: record.id,
-    source_table: sourceTable === "forwarding_service_log" ? "forwarding_service_log" : "external_sales_log",
-    shipping_status: asText(record.fields["Shipping Status"]),
-    tracking_numbers: trackingNumbers,
-    shipping_labels: Array.isArray(record.fields["Shipping Labels"])
-      ? record.fields["Shipping Labels"]
-      : [],
-    items
-  };
-}
-
 async function getForwardingSellerOptions() {
   const records = await airtable(AIRTABLE_SELLERS_TABLE)
     .select({
