@@ -547,12 +547,18 @@
         const el = document.createElement("option");
         el.value = option.id;
         el.textContent = option.label;
+        el.dataset.sourceTable = option.source_table;
         outboundSelect.appendChild(el);
       });
     }
 
     async function loadOutboundDetails(outboundId) {
-      const response = await fetch(`/api/pack-ship-outbound/${encodeURIComponent(outboundId)}`);
+      const selectedOption = outboundSelect.options[outboundSelect.selectedIndex];
+      const sourceTable = selectedOption?.dataset?.sourceTable || "";
+
+      const response = await fetch(
+        `/api/pack-ship-outbound/${encodeURIComponent(outboundId)}?source_table=${encodeURIComponent(sourceTable)}`
+      );
       const data = await response.json();
 
       if (!response.ok) {
@@ -627,6 +633,7 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           outbound_id: currentOutbound.id,
+          source_table: currentOutbound.source_table,
           items_per_parcel: itemsPerParcel,
           packed_inventory_unit_ids: packedInventoryUnitIds
         })
