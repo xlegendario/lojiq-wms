@@ -91,28 +91,55 @@ function first(value) {
   return value ?? null;
 }
 
-function splitStreetAndHouseNumber(addressLine1) {
-  const value = asText(addressLine1);
+function splitStreetAndHouseNumber(addressLine1, addressLine2 = "") {
+  const line1 = asText(addressLine1);
+  const line2 = asText(addressLine2);
 
-  if (!value) {
+  if (!line1) {
     return {
       street: "",
-      houseNumber: ""
+      houseNumber: "",
+      usedAddress2AsHouseNumber: false
     };
   }
 
-  const match = value.match(/^(.*\S)\s+(\d+\S*)$/);
+  // 1. If address2 is only a house number, trust it first
+  // Examples:
+  // address1 = "Zuiderkeerkring"
+  // address2 = "248"
+  if (/^\d+[a-zA-Z0-9\-\/]*$/.test(line2)) {
+    return {
+      street: line1,
+      houseNumber: line2,
+      usedAddress2AsHouseNumber: true
+    };
+  }
 
+  // 2. Standard format: "Kalverstraat 12", "Dorpsweg 15A", "Street 84-1"
+  let match = line1.match(/^(.*\S)\s+(\d+[a-zA-Z0-9\-\/]*)$/);
   if (match) {
     return {
       street: asText(match[1]),
-      houseNumber: asText(match[2])
+      houseNumber: asText(match[2]),
+      usedAddress2AsHouseNumber: false
     };
   }
 
+  // 3. Reverse format: "12 Kalverstraat", "15A Dorpsweg"
+  match = line1.match(/^(\d+[a-zA-Z0-9\-\/]*)\s+(.*\S)$/);
+  if (match) {
+    return {
+      street: asText(match[2]),
+      houseNumber: asText(match[1]),
+      usedAddress2AsHouseNumber: false
+    };
+  }
+
+  // 4. Nothing reliable found
   return {
-    street: value,
-    houseNumber: ""
+    street: line1,
+    houseNumber: "",
+    usedAddress2AsHouseNumber: false
   };
 }
 
@@ -166,7 +193,10 @@ function extractCustomerAddress(shopifyOrder) {
     throw new Error("Shopify order missing shipping address");
   }
 
-  const { street, houseNumber } = splitStreetAndHouseNumber(addr.address1 || "");
+  const { street, houseNumber } = splitStreetAndHouseNumber(
+    addr.address1 || "",
+    addr.address2 || ""
+  );
 
   return {
     name: `${addr.first_name || ""} ${addr.last_name || ""}`.trim(),
