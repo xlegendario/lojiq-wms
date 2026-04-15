@@ -24,6 +24,7 @@ const {
   AIRTABLE_INVENTORY_UNITS_TABLE = "Inventory Units",
   AIRTABLE_EXTERNAL_SALES_LOG_TABLE = "External Sales Log",
   AIRTABLE_FORWARDING_SERVICE_LOG_TABLE = "Forwarding Service Log",
+  AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE = "Unfulfilled Orders Log",
   BUYERS_AIRTABLE_BASE_ID,
   AIRTABLE_BUYERS_TABLE = "Buyers Database", // Main Airtable
   BUYERS_AIRTABLE_TABLE = "Buyer Database",  // External Airtable
@@ -175,6 +176,11 @@ function parseTrackingNumbers(value) {
     .filter(Boolean);
 }
 
+function isWarehouseItemId(itemId) {
+  const value = asText(itemId).toUpperCase();
+  return value.startsWith("PCS-") || value.startsWith("KC-") || value.startsWith("RSC-");
+}
+
 async function getPackShipOutboundOptions() {
   const salesRecords = await airtable(AIRTABLE_EXTERNAL_SALES_LOG_TABLE)
     .select({
@@ -200,6 +206,27 @@ async function getPackShipOutboundOptions() {
     })
     .all();
 
+  const unfulfilledRecords = await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE)
+    .select({
+      fields: [
+        "Shopify Order Number",
+        "Store Name",
+        "Fulfillment Status",
+        "Shipping Status",
+        "Linked Inventory Unit",
+        "Shipping Label"
+      ],
+      filterByFormula: `AND(
+        {Fulfillment Status} = 'Ready To Ship',
+        OR(
+          {Shipping Status} = BLANK(),
+          TRIM({Shipping Status} & '') = '',
+          {Shipping Status} = 'Pending'
+        )
+      )`
+    })
+    .all();
+
   const salesOptions = salesRecords
     .map((record) => {
       const shippingStatus = asText(record.fields["Shipping Status"]);
@@ -221,20 +248,65 @@ async function getPackShipOutboundOptions() {
     .map((record) => {
       const shippingStatus = asText(record.fields["Shipping Status"]);
       const trackingNumbers = parseTrackingNumbers(record.fields["Tracking Numbers"]);
-      const forwardingServiceId = asText(record.fields["Forwarding ID"]);
+      const forwardingId = asText(record.fields["Forwarding ID"]);
       const buyerName = asText(record.fields["Buyer Name"]);
 
       return {
         id: record.id,
         source_table: "forwarding_service_log",
-        label: `${forwardingServiceId || record.id} - ${buyerName || "Unknown Buyer"}`,
+        label: `${forwardingId || record.id} - ${buyerName || "Unknown Buyer"}`,
         shipping_status: shippingStatus,
         tracking_numbers_count: trackingNumbers.length
       };
     })
     .filter((option) => option.tracking_numbers_count > 0);
 
-  return [...salesOptions, ...forwardingOptions];
+  const unfulfilledInventoryIds = [
+    ...new Set(
+      unfulfilledRecords.flatMap((record) =>
+        Array.isArray(record.fields["Linked Inventory Unit"])
+          ? record.fields["Linked Inventory Unit"]
+          : []
+      )
+    )
+  ];
+
+  const inventoryUnitsById = new Map();
+  for (const id of unfulfilledInventoryIds) {
+    const record = await airtable(AIRTABLE_INVENTORY_UNITS_TABLE).find(id);
+    inventoryUnitsById.set(id, record);
+  }
+
+  const groupedOrders = new Map();
+
+  for (const record of unfulfilledRecords) {
+    const shopifyOrderNumber = asText(record.fields["Shopify Order Number"]);
+    const storeName = asText(record.fields["Store Name"]);
+    const linkedInventoryUnitIds = Array.isArray(record.fields["Linked Inventory Unit"])
+      ? record.fields["Linked Inventory Unit"]
+      : [];
+
+    const warehouseInventoryUnitIds = linkedInventoryUnitIds.filter((id) => {
+      const inventoryRecord = inventoryUnitsById.get(id);
+      return inventoryRecord && isWarehouseItemId(inventoryRecord.fields["Item ID"]);
+    });
+
+    if (!warehouseInventoryUnitIds.length) continue;
+
+    const groupKey = `${shopifyOrderNumber}||${storeName}`;
+
+    if (!groupedOrders.has(groupKey)) {
+      groupedOrders.set(groupKey, {
+        id: groupKey,
+        source_table: "unfulfilled_orders_log",
+        label: `${shopifyOrderNumber || record.id} - ${storeName || "Unknown Store"}`,
+        shipping_status: asText(record.fields["Shipping Status"]) || "Pending",
+        tracking_numbers_count: 1
+      });
+    }
+  }
+
+  return [...salesOptions, ...forwardingOptions, ...Array.from(groupedOrders.values())];
 }
 
 async function getPackShipOutboundDetails(outboundId, sourceTable) {
@@ -399,6 +471,110 @@ async function getBuyerCountryOptions() {
   return choices
     .map((choice) => asText(choice.name))
     .filter(Boolean);
+}
+
+async function getPackShipOutboundDetails(outboundId, sourceTable) {
+  if (sourceTable === "unfulfilled_orders_log") {
+    const [shopifyOrderNumber, storeName] = outboundId.split("||");
+
+    const records = await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE)
+      .select({
+        fields: [
+          "Shopify Order Number",
+          "Store Name",
+          "Fulfillment Status",
+          "Shipping Status",
+          "Linked Inventory Unit",
+          "Shipping Label"
+        ],
+        filterByFormula: `AND(
+          TRIM({Shopify Order Number} & '') = '${escapeFormulaValue(shopifyOrderNumber)}',
+          TRIM({Store Name} & '') = '${escapeFormulaValue(storeName)}',
+          {Fulfillment Status} = 'Ready To Ship',
+          OR(
+            {Shipping Status} = BLANK(),
+            TRIM({Shipping Status} & '') = '',
+            {Shipping Status} = 'Pending'
+          )
+        )`
+      })
+      .all();
+
+    const linkedInventoryUnitIds = [
+      ...new Set(
+        records.flatMap((record) =>
+          Array.isArray(record.fields["Linked Inventory Unit"])
+            ? record.fields["Linked Inventory Unit"]
+            : []
+        )
+      )
+    ];
+
+    const inventoryUnitRecords = await Promise.all(
+      linkedInventoryUnitIds.map((id) => airtable(AIRTABLE_INVENTORY_UNITS_TABLE).find(id))
+    );
+
+    const items = inventoryUnitRecords
+      .filter((itemRecord) => isWarehouseItemId(itemRecord.fields["Item ID"]))
+      .map((itemRecord) => ({
+        id: itemRecord.id,
+        gtin: asText(itemRecord.fields["Product GTIN"]),
+        product_name: asText(itemRecord.fields["Product Name"]),
+        sku: asText(itemRecord.fields["SKU"]),
+        size: asText(itemRecord.fields["Size"])
+      }));
+
+    const firstLabelRecord = records.find((record) => {
+      const files = Array.isArray(record.fields["Shipping Label"]) ? record.fields["Shipping Label"] : [];
+      return files.length > 0;
+    });
+
+    return {
+      id: outboundId,
+      source_table: "unfulfilled_orders_log",
+      shipping_status: "Ready To Ship",
+      tracking_numbers: ["ORDER"],
+      shipping_labels: firstLabelRecord && Array.isArray(firstLabelRecord.fields["Shipping Label"])
+        ? firstLabelRecord.fields["Shipping Label"]
+        : [],
+      items
+    };
+  }
+
+  const tableName =
+    sourceTable === "forwarding_service_log"
+      ? AIRTABLE_FORWARDING_SERVICE_LOG_TABLE
+      : AIRTABLE_EXTERNAL_SALES_LOG_TABLE;
+
+  const record = await airtable(tableName).find(outboundId);
+
+  const trackingNumbers = parseTrackingNumbers(record.fields["Tracking Numbers"]);
+  const linkedInventoryUnitIds = Array.isArray(record.fields["Linked Inventory Units"])
+    ? record.fields["Linked Inventory Units"]
+    : [];
+
+  const inventoryUnitRecords = await Promise.all(
+    linkedInventoryUnitIds.map((id) => airtable(AIRTABLE_INVENTORY_UNITS_TABLE).find(id))
+  );
+
+  const items = inventoryUnitRecords.map((itemRecord) => ({
+    id: itemRecord.id,
+    gtin: asText(itemRecord.fields["Product GTIN"]),
+    product_name: asText(itemRecord.fields["Product Name"]),
+    sku: asText(itemRecord.fields["SKU"]),
+    size: asText(itemRecord.fields["Size"])
+  }));
+
+  return {
+    id: record.id,
+    source_table: sourceTable === "forwarding_service_log" ? "forwarding_service_log" : "external_sales_log",
+    shipping_status: asText(record.fields["Shipping Status"]),
+    tracking_numbers: trackingNumbers,
+    shipping_labels: Array.isArray(record.fields["Shipping Labels"])
+      ? record.fields["Shipping Labels"]
+      : [],
+    items
+  };
 }
 
 app.get("/", (_req, res) => {
@@ -748,6 +924,71 @@ app.post("/api/submit-pack-ship", async (req, res) => {
 
     if (!packedInventoryUnitIds.length) {
       return res.status(400).json({ error: "No packed inventory unit ids provided" });
+    }
+
+    if (sourceTable === "unfulfilled_orders_log") {
+      const [shopifyOrderNumber, storeName] = outboundId.split("||");
+
+      const records = await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE)
+        .select({
+          fields: [
+            "Shopify Order Number",
+            "Store Name",
+            "Fulfillment Status",
+            "Shipping Status",
+            "Linked Inventory Unit"
+          ],
+          filterByFormula: `AND(
+            TRIM({Shopify Order Number} & '') = '${escapeFormulaValue(shopifyOrderNumber)}',
+            TRIM({Store Name} & '') = '${escapeFormulaValue(storeName)}',
+            {Fulfillment Status} = 'Ready To Ship',
+            OR(
+              {Shipping Status} = BLANK(),
+              TRIM({Shipping Status} & '') = '',
+              {Shipping Status} = 'Pending'
+            )
+          )`
+        })
+        .all();
+
+      const matchingRecordIds = [];
+
+      for (const record of records) {
+        const linkedIds = Array.isArray(record.fields["Linked Inventory Unit"])
+          ? record.fields["Linked Inventory Unit"]
+          : [];
+
+        const inventoryUnitRecords = await Promise.all(
+          linkedIds.map((id) => airtable(AIRTABLE_INVENTORY_UNITS_TABLE).find(id))
+        );
+
+        const hasWarehouseItem = inventoryUnitRecords.some((itemRecord) =>
+          isWarehouseItemId(itemRecord.fields["Item ID"])
+        );
+
+        if (hasWarehouseItem) {
+          matchingRecordIds.push(record.id);
+        }
+      }
+
+      for (let i = 0; i < matchingRecordIds.length; i += 10) {
+        const batch = matchingRecordIds.slice(i, i + 10);
+
+        await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).update(
+          batch.map((id) => ({
+            id,
+            fields: {
+              "Shipping Status": "Shipped"
+            }
+          }))
+        );
+      }
+
+      await updateInventoryUnitsToSold(packedInventoryUnitIds);
+
+      return res.status(200).json({
+        ok: true
+      });
     }
 
     const tableName =
