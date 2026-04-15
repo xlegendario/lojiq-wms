@@ -178,23 +178,33 @@ async function getOutboundShippingOptionCode(countryCode) {
   return shippingOptionCode;
 }
 
-function buildSendcloudOrderNumber(storeName, shopifyOrderId) {
-  const cleanStore = asText(storeName)
-    .replace(/\s+/g, "-")
-    .replace(/[^a-zA-Z0-9-_]/g, "");
-
-  const cleanOrder = asText(shopifyOrderId)
+function buildSendcloudOrderNumber(orderId, storeName, shopifyOrderNumber) {
+  const cleanOrderId = asText(orderId)
     .replace(/\s+/g, "")
     .replace(/[^a-zA-Z0-9-_]/g, "");
 
-  return [cleanStore, cleanOrder].filter(Boolean).join("-");
+  const cleanStore = asText(storeName)
+    .replace(/\s+/g, "")
+    .replace(/[^a-zA-Z0-9-_]/g, "");
+
+  const cleanShopifyOrderNumber = asText(shopifyOrderNumber)
+    .replace(/^#/, "") // verwijdert eventuele '#'
+    .replace(/\s+/g, "")
+    .replace(/[^a-zA-Z0-9-_]/g, "");
+
+  return [
+    cleanOrderId,
+    cleanStore,
+    cleanShopifyOrderNumber
+  ].filter(Boolean).join("-");
 }
 
 async function createSendcloudLabel({
   customerAddress,
   shippingOptionCode,
+  orderId,
   storeName,
-  shopifyOrderId
+  shopifyOrderNumber
 }) {
   const payload = {
     parcel: {
@@ -213,7 +223,11 @@ async function createSendcloudLabel({
       request_label: true,
       apply_shipping_rules: false,
       weight: "0.5",
-      order_number: buildSendcloudOrderNumber(storeName, shopifyOrderId)
+      order_number: buildSendcloudOrderNumber(
+        orderId,
+        storeName,
+        shopifyOrderNumber
+      )
     }
   };
 
@@ -1104,11 +1118,16 @@ app.post("/api/receive-parcel", async (req, res) => {
       const customerAddress = extractCustomerAddress(shopifyOrder);
       const shippingOptionCode = await getOutboundShippingOptionCode(customerAddress.country);
 
+      const shopifyOrderNumber =
+        asText(shopifyOrder.order_number) ||
+        asText(shopifyOrder.name).replace("#", "");
+      
       const sendcloud = await createSendcloudLabel({
         customerAddress,
         shippingOptionCode,
+        orderId,
         storeName,
-        shopifyOrderId
+        shopifyOrderNumber
       });
 
       const labelPdfBuffer = await fetchBuffer(sendcloud.labelUrl, {
