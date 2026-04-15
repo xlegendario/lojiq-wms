@@ -237,6 +237,43 @@ async function getPackShipOutboundOptions() {
   return [...salesOptions, ...forwardingOptions];
 }
 
+async function getPackShipOutboundDetails(outboundId, sourceTable) {
+  const tableName =
+    sourceTable === "forwarding_service_log"
+      ? AIRTABLE_FORWARDING_SERVICE_LOG_TABLE
+      : AIRTABLE_EXTERNAL_SALES_LOG_TABLE;
+
+  const record = await airtable(tableName).find(outboundId);
+
+  const trackingNumbers = parseTrackingNumbers(record.fields["Tracking Numbers"]);
+  const linkedInventoryUnitIds = Array.isArray(record.fields["Linked Inventory Units"])
+    ? record.fields["Linked Inventory Units"]
+    : [];
+
+  const inventoryUnitRecords = await Promise.all(
+    linkedInventoryUnitIds.map((id) => airtable(AIRTABLE_INVENTORY_UNITS_TABLE).find(id))
+  );
+
+  const items = inventoryUnitRecords.map((itemRecord) => ({
+    id: itemRecord.id,
+    gtin: asText(itemRecord.fields["Product GTIN"]),
+    product_name: asText(itemRecord.fields["Product Name"]),
+    sku: asText(itemRecord.fields["SKU"]),
+    size: asText(itemRecord.fields["Size"])
+  }));
+
+  return {
+    id: record.id,
+    source_table: sourceTable === "forwarding_service_log" ? "forwarding_service_log" : "external_sales_log",
+    shipping_status: asText(record.fields["Shipping Status"]),
+    tracking_numbers: trackingNumbers,
+    shipping_labels: Array.isArray(record.fields["Shipping Labels"])
+      ? record.fields["Shipping Labels"]
+      : [],
+    items
+  };
+}
+
 async function getForwardingSellerOptions() {
   const records = await airtable(AIRTABLE_SELLERS_TABLE)
     .select({
@@ -663,12 +700,17 @@ app.get("/api/pack-ship-outbounds", async (_req, res) => {
 app.get("/api/pack-ship-outbound/:id", async (req, res) => {
   try {
     const outboundId = asText(req.params?.id);
+    const sourceTable = asText(req.query?.source_table);
 
     if (!outboundId) {
       return res.status(400).json({ error: "Missing outbound id" });
     }
 
-    const outbound = await getPackShipOutboundDetails(outboundId);
+    if (!sourceTable) {
+      return res.status(400).json({ error: "Missing source_table" });
+    }
+
+    const outbound = await getPackShipOutboundDetails(outboundId, sourceTable);
 
     return res.status(200).json({
       ok: true,
@@ -686,6 +728,7 @@ app.get("/api/pack-ship-outbound/:id", async (req, res) => {
 app.post("/api/submit-pack-ship", async (req, res) => {
   try {
     const outboundId = asText(req.body?.outbound_id);
+    const sourceTable = asText(req.body?.source_table);
     const itemsPerParcel = asText(req.body?.items_per_parcel);
     const packedInventoryUnitIds = Array.isArray(req.body?.packed_inventory_unit_ids)
       ? req.body.packed_inventory_unit_ids.map((id) => asText(id)).filter(Boolean)
@@ -693,6 +736,10 @@ app.post("/api/submit-pack-ship", async (req, res) => {
 
     if (!outboundId) {
       return res.status(400).json({ error: "Missing outbound_id" });
+    }
+
+    if (!sourceTable) {
+      return res.status(400).json({ error: "Missing source_table" });
     }
 
     if (!itemsPerParcel) {
@@ -703,12 +750,34 @@ app.post("/api/submit-pack-ship", async (req, res) => {
       return res.status(400).json({ error: "No packed inventory unit ids provided" });
     }
 
-    await airtable(AIRTABLE_EXTERNAL_SALES_LOG_TABLE).update(outboundId, {
+    const tableName =
+      sourceTable === "forwarding_service_log"
+        ? AIRTABLE_FORWARDING_SERVICE_LOG_TABLE
+        : AIRTABLE_EXTERNAL_SALES_LOG_TABLE;
+
+    await airtable(tableName).update(outboundId, {
       "Items per Parcel": itemsPerParcel,
       "Shipping Status": "Shipped"
     });
 
-    await updateInventoryUnitsToSold(packedInventoryUnitIds);
+    if (sourceTable === "forwarding_service_log") {
+      const uniqueIds = [...new Set(packedInventoryUnitIds)];
+
+      for (let i = 0; i < uniqueIds.length; i += 10) {
+        const batch = uniqueIds.slice(i, i + 10);
+
+        await airtable(AIRTABLE_INVENTORY_UNITS_TABLE).update(
+          batch.map((id) => ({
+            id,
+            fields: {
+              "Availability Status": "Forwarded"
+            }
+          }))
+        );
+      }
+    } else {
+      await updateInventoryUnitsToSold(packedInventoryUnitIds);
+    }
 
     return res.status(200).json({
       ok: true
