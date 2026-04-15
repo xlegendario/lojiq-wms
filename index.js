@@ -253,6 +253,11 @@ async function getForwardingSellerOptions() {
     .filter((option) => option.label);
 }
 
+async function getSellerCodeByRecordId(sellerRecordId) {
+  const record = await airtable(AIRTABLE_SELLERS_TABLE).find(sellerRecordId);
+  return asText(record.fields["Seller ID"]);
+}
+
 async function getInboundPartyOptions() {
   const sellerRecords = await airtable(AIRTABLE_SELLERS_TABLE)
     .select({
@@ -887,13 +892,17 @@ app.post("/api/outbound-lookup-gtin", async (req, res) => {
       return res.status(400).json({ error: "Missing seller_id for forwarding lookup" });
     }
 
+    const sellerCode = mode === "Forwarding"
+      ? await getSellerCodeByRecordId(sellerId)
+      : "";
+
     const records = await airtable(AIRTABLE_INVENTORY_UNITS_TABLE)
       .select({
         filterByFormula: mode === "Forwarding"
           ? `AND(
               TRIM({Product GTIN} & '') = '${safeGtin}',
               {Availability Status} = '${escapeFormulaValue(statusToMatch)}',
-              FIND('${escapeFormulaValue(sellerId)}', ARRAYJOIN({Seller ID})) > 0
+              FIND('${escapeFormulaValue(sellerCode)}', ARRAYJOIN({Seller ID})) > 0
             )`
           : `AND(
               TRIM({Product GTIN} & '') = '${safeGtin}',
@@ -986,6 +995,10 @@ app.post("/api/outbound-search-sku-size", async (req, res) => {
       return res.status(400).json({ error: "Missing seller_id for forwarding search" });
     }
 
+    const sellerCode = mode === "Forwarding"
+      ? await getSellerCodeByRecordId(sellerId)
+      : "";
+
     const records = await airtable(AIRTABLE_INVENTORY_UNITS_TABLE)
       .select({
         filterByFormula: mode === "Forwarding"
@@ -993,7 +1006,7 @@ app.post("/api/outbound-search-sku-size", async (req, res) => {
               UPPER(TRIM({SKU} & '')) = '${safeSku}',
               TRIM({Size} & '') = '${safeSize}',
               {Availability Status} = '${escapeFormulaValue(statusToMatch)}',
-              FIND('${escapeFormulaValue(sellerId)}', ARRAYJOIN({Seller ID})) > 0
+              FIND('${escapeFormulaValue(sellerCode)}', ARRAYJOIN({Seller ID})) > 0
             )`
           : `AND(
               UPPER(TRIM({SKU} & '')) = '${safeSku}',
