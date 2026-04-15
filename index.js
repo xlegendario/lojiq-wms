@@ -1151,6 +1151,7 @@ app.post("/api/submit-outbound", async (req, res) => {
       : 0;
 
     const createFields = {
+      "Seller ID": [sellerId],
       "Linked Inventory Units": linkedInventoryUnitIds,
       "Shipping Costs": shippingCosts,
       "Amount of Labels": shippingLabels,
