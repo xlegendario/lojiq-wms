@@ -91,6 +91,31 @@ function first(value) {
   return value ?? null;
 }
 
+function splitStreetAndHouseNumber(addressLine1) {
+  const value = asText(addressLine1);
+
+  if (!value) {
+    return {
+      street: "",
+      houseNumber: ""
+    };
+  }
+
+  const match = value.match(/^(.*\S)\s+(\d+\S*)$/);
+
+  if (match) {
+    return {
+      street: asText(match[1]),
+      houseNumber: asText(match[2])
+    };
+  }
+
+  return {
+    street: value,
+    houseNumber: ""
+  };
+}
+
 async function fetchBuffer(url, headers = {}) {
   const res = await fetch(url, { headers });
 
@@ -141,10 +166,13 @@ function extractCustomerAddress(shopifyOrder) {
     throw new Error("Shopify order missing shipping address");
   }
 
+  const { street, houseNumber } = splitStreetAndHouseNumber(addr.address1 || "");
+
   return {
     name: `${addr.first_name || ""} ${addr.last_name || ""}`.trim(),
     company: addr.company || "",
-    address1: addr.address1 || "",
+    address1: street,
+    houseNumber,
     address2: addr.address2 || "",
     city: addr.city || "",
     postalCode: addr.zip || "",
@@ -211,6 +239,7 @@ async function createSendcloudLabel({
       name: customerAddress.name,
       company_name: customerAddress.company || undefined,
       address: customerAddress.address1,
+      house_number: customerAddress.houseNumber,
       address_2: customerAddress.address2 || undefined,
       city: customerAddress.city,
       postal_code: customerAddress.postalCode,
@@ -1116,6 +1145,11 @@ app.post("/api/receive-parcel", async (req, res) => {
       });
 
       const customerAddress = extractCustomerAddress(shopifyOrder);
+
+      if (!customerAddress.houseNumber) {
+        throw new Error(`Customer address is missing a detectable house number for order ${orderId}`);
+      }
+      
       const shippingOptionCode = await getOutboundShippingOptionCode(customerAddress.country);
 
       const shopifyOrderNumber =
