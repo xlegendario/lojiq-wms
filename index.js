@@ -1168,7 +1168,8 @@ app.post("/api/submit-outbound", async (req, res) => {
       "Linked Inventory Units": linkedInventoryUnitIds,
       "Shipping Costs": shippingCosts,
       "Amount of Labels": shippingLabels,
-      "Unit Forwarding Fee": averageForwardingFee
+      "Unit Forwarding Fee": averageForwardingFee,
+      "Forwarding Date": new Date().toISOString().split("T")[0]
     };
 
     if (buyerId) {
