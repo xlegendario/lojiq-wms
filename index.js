@@ -190,7 +190,7 @@ async function getPackShipOutboundOptions() {
         "Shipping Status",
         "Tracking Numbers"
       ],
-      filterByFormula: `{Shipping Status} = 'Ready To Ship'`
+      filterByFormula: `{Shipping Status} = 'Ready to Ship'`
     })
     .all();
 
@@ -202,7 +202,7 @@ async function getPackShipOutboundOptions() {
         "Shipping Status",
         "Tracking Numbers"
       ],
-      filterByFormula: `{Shipping Status} = 'Ready To Ship'`
+      filterByFormula: `{Shipping Status} = 'Ready to Ship'`
     })
     .all();
 
@@ -453,7 +453,7 @@ async function getPackShipOutboundDetails(outboundId, sourceTable) {
         filterByFormula: `AND(
           TRIM({Shopify Order Number} & '') = '${escapeFormulaValue(shopifyOrderNumber)}',
           TRIM({Store Name} & '') = '${escapeFormulaValue(storeName)}',
-          {Fulfillment Status} = 'Ready To Ship',
+          {Fulfillment Status} = 'Ready to Ship',
           OR(
             {Shipping Status} = BLANK(),
             TRIM({Shipping Status} & '') = '',
@@ -904,7 +904,7 @@ app.post("/api/submit-pack-ship", async (req, res) => {
           filterByFormula: `AND(
             TRIM({Shopify Order Number} & '') = '${escapeFormulaValue(shopifyOrderNumber)}',
             TRIM({Store Name} & '') = '${escapeFormulaValue(storeName)}',
-            {Fulfillment Status} = 'Ready To Ship',
+            {Fulfillment Status} = 'Ready to Ship',
             OR(
               {Shipping Status} = BLANK(),
               TRIM({Shipping Status} & '') = '',
