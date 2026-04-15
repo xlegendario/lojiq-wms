@@ -787,33 +787,92 @@ app.post("/api/receive-parcel", async (req, res) => {
     }
 
     const now = new Date().toISOString();
+    const safeTracking = escapeFormulaValue(trackingNumber);
 
-    const records = await airtable(AIRTABLE_INCOMING_STOCK_TABLE)
+    // 1. First check Incoming Stock (existing behavior)
+    const incomingRecords = await airtable(AIRTABLE_INCOMING_STOCK_TABLE)
       .select({
-        filterByFormula: `TRIM({Tracking Number} & '') = '${escapeFormulaValue(trackingNumber)}'`,
+        filterByFormula: `TRIM({Tracking Number} & '') = '${safeTracking}'`,
         maxRecords: 1
       })
       .firstPage();
 
-    if (records.length > 0) {
-      await airtable(AIRTABLE_INCOMING_STOCK_TABLE).update(records[0].id, {
+    if (incomingRecords.length > 0) {
+      await airtable(AIRTABLE_INCOMING_STOCK_TABLE).update(incomingRecords[0].id, {
         "Status": "Received",
         "Received At": now
       });
 
-      return res.json({ message: "Parcel updated", exists: true });
+      return res.json({
+        message: "Parcel updated",
+        exists: true
+      });
     }
 
+    // 2. If not found in Incoming Stock, check Unfulfilled Orders Log
+    const unfulfilledRecords = await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE)
+      .select({
+        fields: [
+          "Order ID",
+          "Fulfillment Status",
+          "StockX Tracking Number",
+          "GOAT Tracking Number"
+        ],
+        filterByFormula: `OR(
+          TRIM({StockX Tracking Number} & '') = '${safeTracking}',
+          TRIM({GOAT Tracking Number} & '') = '${safeTracking}'
+        )`
+      })
+      .all();
+
+    if (unfulfilledRecords.length > 0) {
+      const nonAwaitingLabelRecord = unfulfilledRecords.find((record) => {
+        const fulfillmentStatus = asText(record.fields["Fulfillment Status"]);
+        return fulfillmentStatus !== "Awaiting Label";
+      });
+
+      if (nonAwaitingLabelRecord) {
+        const orderId = asText(nonAwaitingLabelRecord.fields["Order ID"]) || nonAwaitingLabelRecord.id;
+
+        return res.status(400).json({
+          error: `The Order ${orderId} might be cancelled or already shipped, check Airtable`
+        });
+      }
+
+      for (let i = 0; i < unfulfilledRecords.length; i += 10) {
+        const batch = unfulfilledRecords.slice(i, i + 10);
+
+        await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).update(
+          batch.map((record) => ({
+            id: record.id,
+            fields: {
+              "Fulfillment Status": "Requested Label"
+            }
+          }))
+        );
+      }
+
+      return res.json({
+        message: "Unfulfilled order updated to Requested Label",
+        exists: false,
+        matched_unfulfilled_order: true
+      });
+    }
+
+    // 3. Fallback: create placeholder in Incoming Stock (existing behavior)
     await airtable(AIRTABLE_INCOMING_STOCK_TABLE).create({
       "Tracking Number": trackingNumber,
       "Status": "Received",
       "Received At": now
     });
 
-    res.json({ message: "Parcel created", exists: false });
+    return res.json({
+      message: "Parcel created",
+      exists: false
+    });
   } catch (error) {
     console.error(error);
-    res.status(500).json({
+    return res.status(500).json({
       error: "Failed to process parcel",
       details: error.message
     });
