@@ -422,6 +422,13 @@
         </div>
 
         <div class="stack">
+          <div id="sellerSelectWrap" style="display:none;">
+            <div class="field-label">Seller</div>
+            <select id="sellerSelect">
+              <option value="" selected disabled>Select Seller</option>
+            </select>
+          </div>
+
           <div>
             <div class="field-label">Buyer</div>
             <select id="buyerSelect">
@@ -541,6 +548,8 @@
   <div id="toastStack" class="toast-stack"></div>
 
   <script>
+    const sellerSelectWrap = document.getElementById("sellerSelectWrap");
+    const sellerSelect = document.getElementById("sellerSelect");
     const buyerSelect = document.getElementById("buyerSelect");
     const addBuyerBtn = document.getElementById("addBuyerBtn");
     const buyerDetails = document.getElementById("buyerDetails");
@@ -580,6 +589,7 @@
     let outboundMode = "Selling";
     let items = [];
     let buyers = [];
+    let forwardingSellers = [];
 
     function escapeHtml(value) {
       return String(value ?? "")
@@ -633,7 +643,27 @@
         buyerSelect.appendChild(el);
       }
     }
+    
+    async function loadForwardingSellers() {
+      const response = await fetch("/api/outbound-forwarding-sellers");
+      const data = await response.json();
 
+      if (!response.ok) {
+        throw new Error(data.details || data.error || "Failed to load sellers");
+      }
+
+      forwardingSellers = Array.isArray(data.options) ? data.options : [];
+
+      sellerSelect.innerHTML = `<option value="" selected disabled>Select Seller</option>`;
+
+      for (const option of forwardingSellers) {
+        const el = document.createElement("option");
+        el.value = option.id;
+        el.textContent = option.label;
+        sellerSelect.appendChild(el);
+      }
+    }
+    
     async function loadBuyerCountryOptions() {
       const response = await fetch("/api/outbound-buyer-country-options");
       const data = await response.json();
@@ -725,6 +755,7 @@
       if (outboundMode === "Selling") {
         sellingBtn.className = "button mode-button";
         forwardingBtn.className = "button secondary mode-button";
+        sellerSelectWrap.style.display = "none";
         totalSellingPriceLabel.textContent = "Total Selling Price:";
         resultLabel.textContent = "Result:";
         unitPriceHeader.textContent = "Unit Price";
@@ -734,6 +765,7 @@
       } else {
         sellingBtn.className = "button secondary mode-button";
         forwardingBtn.className = "button mode-button";
+        sellerSelectWrap.style.display = "";
         totalSellingPriceLabel.textContent = "Forwarding Total:";
         resultLabel.textContent = "Total:";
         unitPriceHeader.textContent = "Unit Fee";
@@ -844,10 +876,19 @@
     }
 
     async function lookupByGTIN(gtin) {
+      if (outboundMode === "Forwarding" && !sellerSelect.value) {
+        showToast("Please select a Seller first.", "warning", "Warning");
+        return;
+      }
+
       const response = await fetch("/api/outbound-lookup-gtin", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ gtin, mode: outboundMode })
+        body: JSON.stringify({
+          gtin,
+          mode: outboundMode,
+          seller_id: sellerSelect.value
+        })
       });
 
       const data = await response.json();
@@ -877,11 +918,21 @@
         showToast("Please fill SKU and Size first.", "warning", "Warning");
         return;
       }
+
+      if (outboundMode === "Forwarding" && !sellerSelect.value) {
+        showToast("Please select a Seller first.", "warning", "Warning");
+        return;
+      }
     
       const response = await fetch("/api/outbound-search-sku-size", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sku, size, mode: outboundMode })
+        body: JSON.stringify({
+          sku,
+          size,
+          mode: outboundMode,
+          seller_id: sellerSelect.value
+        })
       });
     
       const data = await response.json();
@@ -950,6 +1001,7 @@
       shippingLabelsInput.value = "";
       totalSellingPriceInput.value = "";
       shippingCostsInput.value = "";
+      sellerSelect.value = "";
       buyerSelect.value = "";
       buyerDetails.className = "buyer-details";
       buyerDetails.innerHTML = "";
@@ -961,13 +1013,19 @@
 
     sellingBtn.addEventListener("click", () => {
       outboundMode = "Selling";
+      sellerSelect.value = "";
+      items = [];
       syncModeUI();
+      renderTable();
       renderSummaryTotals();
     });
 
     forwardingBtn.addEventListener("click", () => {
       outboundMode = "Forwarding";
+      sellerSelect.value = "";
+      items = [];
       syncModeUI();
+      renderTable();
       renderSummaryTotals();
     });
 
@@ -989,6 +1047,12 @@
 
     buyerSelect.addEventListener("change", () => {
       renderBuyerDetails();
+      scanInput.focus();
+    });
+
+    sellerSelect.addEventListener("change", () => {
+      items = [];
+      renderTable();
       scanInput.focus();
     });
 
@@ -1035,6 +1099,11 @@
     totalSellingPriceInput.addEventListener("input", renderSummaryTotals);
 
     submitBtn.addEventListener("click", async () => {
+      if (outboundMode === "Forwarding" && !sellerSelect.value) {
+        showToast("Please select a Seller first.", "warning", "Warning");
+        return;
+      }
+
       if (!items.length) {
         showToast("Please add at least one product.", "warning", "Warning");
         return;
@@ -1076,13 +1145,15 @@
           body: JSON.stringify({
             mode: outboundMode,
             buyer_id: buyerSelect.value,
+            seller_id: sellerSelect.value,
             total_selling_price: Number(totalSellingPriceInput.value) || 0,
             shipping_costs: Number(shippingCostsInput.value) || 0,
             shipping_labels: shippingLabelsValue,
             items: items.map((item) => ({
               quantity: item.quantity,
               inventory_unit_ids: item.inventoryUnitIds,
-              seller_ids: item.sellerIds
+              seller_ids: item.sellerIds,
+              unit_forwarding_fee: item.unitPrice
             }))
           })
         });
@@ -1108,7 +1179,7 @@
     syncModeUI();
     renderTable();
 
-    Promise.all([loadBuyers(), loadBuyerCountryOptions()])
+    Promise.all([loadBuyers(), loadBuyerCountryOptions(), loadForwardingSellers()])
       .then(() => {
         renderBuyerDetails();
         scanInput.focus();
