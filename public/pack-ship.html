@@ -531,8 +531,18 @@
       });
     }
 
-    async function loadOutboundOptions() {
-      const response = await fetch("/api/pack-ship-outbounds");
+    function syncSinglePackageUI() {
+      const isSinglePackage = currentOutbound?.source_table === "unfulfilled_orders_log";
+      trackingSelect.disabled = !!isSinglePackage;
+    }    
+
+    async function loadOutboundDetails(outboundId) {
+      const selectedOption = outboundSelect.options[outboundSelect.selectedIndex];
+      const sourceTable = selectedOption?.dataset?.sourceTable || "";
+
+      const response = await fetch(
+        `/api/pack-ship-outbound/${encodeURIComponent(outboundId)}?source_table=${encodeURIComponent(sourceTable)}`
+      );
       const data = await response.json();
 
       if (!response.ok) {
@@ -575,6 +585,7 @@
 
       shippingStatusDisplay.value = currentOutbound.shipping_status || "";
       renderTrackingOptions();
+      syncSinglePackageUI();
       renderShippingLabels();
       renderUnpacked();
       renderAssignments();
@@ -587,7 +598,10 @@
         return;
       }
 
-      const trackingNumber = trackingSelect.value;
+      const trackingNumber = currentOutbound.source_table === "unfulfilled_orders_log"
+        ? "ORDER"
+        : trackingSelect.value;
+
       if (!trackingNumber) {
         showToast("Select a tracking number first.", "warning", "Warning");
         return;
@@ -650,6 +664,7 @@
       unpacked = [];
       assignments = {};
       shippingStatusDisplay.value = "";
+      trackingSelect.disabled = false;
       trackingSelect.innerHTML = `<option value="" selected disabled>Select Tracking Number</option>`;
       shippingLabelsWrap.innerHTML = "";
       renderUnpacked();
