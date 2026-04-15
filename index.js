@@ -85,7 +85,8 @@ async function updateInventoryUnitsToReserved(recordIds) {
       batch.map((id) => ({
         id,
         fields: {
-          "Availability Status": "Reserved"
+          "Availability Status": "Reserved",
+          "Selling Method": "Kickz Caviar"
         }
       }))
     );
