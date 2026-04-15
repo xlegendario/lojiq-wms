@@ -3,6 +3,7 @@ import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
 import Airtable from "airtable";
+import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 
 dotenv.config();
 
@@ -28,7 +29,16 @@ const {
   BUYERS_AIRTABLE_BASE_ID,
   AIRTABLE_BUYERS_TABLE = "Buyers Database", // Main Airtable
   BUYERS_AIRTABLE_TABLE = "Buyer Database",  // External Airtable
-  BUYERS_AIRTABLE_TOKEN
+  BUYERS_AIRTABLE_TOKEN,
+  AIRTABLE_OUTBOUND_SHIPPING_CODES_TABLE = "Outbound Shipping Codes",
+  SENDCLOUD_PUBLIC_KEY,
+  SENDCLOUD_SECRET_KEY,
+  SENDCLOUD_PARCELS_URL = "https://panel.sendcloud.sc/api/v2/parcels",
+  R2_ACCOUNT_ID,
+  R2_ACCESS_KEY_ID,
+  R2_SECRET_ACCESS_KEY,
+  R2_BUCKET,
+  R2_PUBLIC_BASE_URL
 } = process.env;
 
 if (!AIRTABLE_TOKEN) {
@@ -49,6 +59,15 @@ const buyersBase = new Airtable({
   apiKey: BUYERS_AIRTABLE_TOKEN || AIRTABLE_TOKEN
 }).base(BUYERS_AIRTABLE_BASE_ID);
 
+const r2 = new S3Client({
+  region: "auto",
+  endpoint: `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+  credentials: {
+    accessKeyId: R2_ACCESS_KEY_ID,
+    secretAccessKey: R2_SECRET_ACCESS_KEY
+  }
+});
+
 function asText(value) {
   if (value === null || value === undefined) return "";
   return String(value).trim();
@@ -56,6 +75,188 @@ function asText(value) {
 
 function escapeFormulaValue(value) {
   return asText(value).replace(/'/g, "\\'");
+}
+
+function buildBasicAuthHeader(publicKey, secretKey) {
+  const token = Buffer.from(`${publicKey}:${secretKey}`).toString("base64");
+  return `Basic ${token}`;
+}
+
+function sanitizeFileName(name) {
+  return String(name || "").replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+
+function first(value) {
+  if (Array.isArray(value)) return value[0] ?? null;
+  return value ?? null;
+}
+
+async function fetchBuffer(url, headers = {}) {
+  const res = await fetch(url, { headers });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Failed to fetch buffer from ${url}: ${res.status} ${text}`);
+  }
+
+  return Buffer.from(await res.arrayBuffer());
+}
+
+async function uploadPdfToR2({ key, pdfBuffer }) {
+  await r2.send(
+    new PutObjectCommand({
+      Bucket: R2_BUCKET,
+      Key: key,
+      Body: pdfBuffer,
+      ContentType: "application/pdf"
+    })
+  );
+
+  return `${R2_PUBLIC_BASE_URL}/${key}`;
+}
+
+async function getShopifyOrder({ shopDomain, accessToken, orderId }) {
+  const url = `https://${shopDomain}/admin/api/2024-01/orders/${orderId}.json`;
+
+  const res = await fetch(url, {
+    headers: {
+      "X-Shopify-Access-Token": accessToken,
+      "Content-Type": "application/json"
+    }
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Shopify order fetch failed: ${res.status} ${text}`);
+  }
+
+  const data = await res.json();
+  return data.order;
+}
+
+function extractCustomerAddress(shopifyOrder) {
+  const addr = shopifyOrder?.shipping_address;
+
+  if (!addr) {
+    throw new Error("Shopify order missing shipping address");
+  }
+
+  return {
+    name: `${addr.first_name || ""} ${addr.last_name || ""}`.trim(),
+    company: addr.company || "",
+    address1: addr.address1 || "",
+    address2: addr.address2 || "",
+    city: addr.city || "",
+    postalCode: addr.zip || "",
+    country: addr.country_code || "",
+    email: shopifyOrder?.email || "",
+    phone: addr.phone || ""
+  };
+}
+
+async function getOutboundShippingOptionCode(countryCode) {
+  const safeCountryCode = escapeFormulaValue(countryCode);
+
+  const records = await airtable(AIRTABLE_OUTBOUND_SHIPPING_CODES_TABLE)
+    .select({
+      fields: ["Country Code", "Shipping Option Code"],
+      filterByFormula: `TRIM({Country Code} & '') = '${safeCountryCode}'`,
+      maxRecords: 1
+    })
+    .firstPage();
+
+  if (!records.length) {
+    throw new Error(`No outbound shipping option configured for country ${countryCode}`);
+  }
+
+  const shippingOptionCode = asText(records[0].fields["Shipping Option Code"]);
+
+  if (!shippingOptionCode) {
+    throw new Error(`Shipping Option Code missing for country ${countryCode}`);
+  }
+
+  return shippingOptionCode;
+}
+
+function buildSendcloudOrderNumber(storeName, shopifyOrderId) {
+  const cleanStore = asText(storeName)
+    .replace(/\s+/g, "-")
+    .replace(/[^a-zA-Z0-9-_]/g, "");
+
+  const cleanOrder = asText(shopifyOrderId)
+    .replace(/\s+/g, "")
+    .replace(/[^a-zA-Z0-9-_]/g, "");
+
+  return [cleanStore, cleanOrder].filter(Boolean).join("-");
+}
+
+async function createSendcloudLabel({
+  customerAddress,
+  shippingOptionCode,
+  storeName,
+  shopifyOrderId
+}) {
+  const payload = {
+    parcel: {
+      name: customerAddress.name,
+      company_name: customerAddress.company || undefined,
+      address: customerAddress.address1,
+      address_2: customerAddress.address2 || undefined,
+      city: customerAddress.city,
+      postal_code: customerAddress.postalCode,
+      country: customerAddress.country,
+      email: customerAddress.email || undefined,
+      telephone: customerAddress.phone || undefined,
+      shipment: {
+        id: Number(shippingOptionCode)
+      },
+      request_label: true,
+      apply_shipping_rules: false,
+      weight: "0.5",
+      order_number: buildSendcloudOrderNumber(storeName, shopifyOrderId)
+    }
+  };
+
+  const res = await fetch(SENDCLOUD_PARCELS_URL, {
+    method: "POST",
+    headers: {
+      Authorization: buildBasicAuthHeader(SENDCLOUD_PUBLIC_KEY, SENDCLOUD_SECRET_KEY),
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload)
+  });
+
+  const body = await res.json().catch(() => ({}));
+
+  if (!res.ok) {
+    throw new Error(`Sendcloud create parcel failed: ${res.status} ${JSON.stringify(body)}`);
+  }
+
+  const parcel = body?.parcel || {};
+
+  const labelUrl =
+    asText(parcel?.label?.normal_printer) ||
+    asText(parcel?.label?.label_printer) ||
+    asText(parcel?.label_url) ||
+    "";
+
+  const trackingNumber =
+    asText(parcel?.tracking_number) ||
+    asText(parcel?.tracking_no) ||
+    "";
+
+  if (!labelUrl) {
+    throw new Error(`Sendcloud response missing label URL: ${JSON.stringify(body)}`);
+  }
+
+  if (!trackingNumber) {
+    throw new Error(`Sendcloud response missing tracking number: ${JSON.stringify(body)}`);
+  }
+
+  return {
+    labelUrl,
+    trackingNumber
+  };
 }
 
 async function updateInventoryUnitsToForwardPending(recordIds) {
@@ -816,7 +1017,12 @@ app.post("/api/receive-parcel", async (req, res) => {
           "Order ID",
           "Fulfillment Status",
           "StockX Tracking Number",
-          "GOAT Tracking Number"
+          "GOAT Tracking Number",
+          "Client",
+          "Shopify Order ID",
+          "Store Name",
+          "Shipping Label",
+          "Tracking Number"
         ],
         filterByFormula: `OR(
           TRIM({StockX Tracking Number} & '') = '${safeTracking}',
@@ -830,36 +1036,107 @@ app.post("/api/receive-parcel", async (req, res) => {
         const fulfillmentStatus = asText(record.fields["Fulfillment Status"]);
         return fulfillmentStatus !== "Awaiting Label";
       });
-    
+
       if (nonAwaitingLabelRecord) {
         const orderId = asText(nonAwaitingLabelRecord.fields["Order ID"]) || nonAwaitingLabelRecord.id;
-    
+
         return res.status(400).json({
           error: `The Order ${orderId} might be cancelled or already shipped, check Airtable`
         });
       }
-    
-      for (let i = 0; i < unfulfilledRecords.length; i += 10) {
-        const batch = unfulfilledRecords.slice(i, i + 10);
-    
-        await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).update(
-          batch.map((record) => ({
-            id: record.id,
-            fields: {
-              "Fulfillment Status": "Requested Label"
-            }
-          }))
-        );
+
+      // For now handle the first matching order safely
+      const orderRecord = unfulfilledRecords[0];
+      const orderFields = orderRecord.fields || {};
+      const orderId = asText(orderFields["Order ID"]) || orderRecord.id;
+
+      const clientId = first(orderFields["Client"]);
+      if (!clientId) {
+        return res.status(400).json({
+          error: `The Order ${orderId} has no linked Client`
+        });
       }
-    
-      const firstOrderId =
-        asText(unfulfilledRecords[0].fields["Order ID"]) || unfulfilledRecords[0].id;
-    
-      return res.json({
-        message: `Label is requested for ${firstOrderId} successfully`,
+
+      const merchantRecord = await airtable(AIRTABLE_MERCHANTS_TABLE).find(clientId);
+      const merchantFields = merchantRecord.fields || {};
+
+      const labelsOnContract = !!merchantFields["Labels On Contract?"];
+
+      if (!labelsOnContract) {
+        await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).update(orderRecord.id, {
+          "Fulfillment Status": "Requested Label"
+        });
+
+        return res.status(200).json({
+          message: `Label request registered for ${orderId}`,
+          exists: false,
+          matched_unfulfilled_order: true,
+          order_id: orderId
+        });
+      }
+
+      const shopDomain = asText(merchantFields["Shopify Store URL"])
+        .replace(/^https?:\/\//, "")
+        .replace(/\/$/, "");
+
+      const accessToken = asText(merchantFields["Shopify Token"]);
+      const shopifyOrderId = asText(orderFields["Shopify Order ID"]);
+      const storeName = asText(orderFields["Store Name"]) || asText(merchantFields["Store Name"]);
+
+      if (!shopDomain) {
+        throw new Error(`Missing Shopify Store URL for merchant linked to order ${orderId}`);
+      }
+
+      if (!accessToken) {
+        throw new Error(`Missing Shopify Token for merchant linked to order ${orderId}`);
+      }
+
+      if (!shopifyOrderId) {
+        throw new Error(`Missing Shopify Order ID on order ${orderId}`);
+      }
+
+      const shopifyOrder = await getShopifyOrder({
+        shopDomain,
+        accessToken,
+        orderId: shopifyOrderId
+      });
+
+      const customerAddress = extractCustomerAddress(shopifyOrder);
+      const shippingOptionCode = await getOutboundShippingOptionCode(customerAddress.country);
+
+      const sendcloud = await createSendcloudLabel({
+        customerAddress,
+        shippingOptionCode,
+        storeName,
+        shopifyOrderId
+      });
+
+      const labelPdfBuffer = await fetchBuffer(sendcloud.labelUrl, {
+        Authorization: buildBasicAuthHeader(SENDCLOUD_PUBLIC_KEY, SENDCLOUD_SECRET_KEY)
+      });
+
+      const r2Key = `shipping-labels/${sanitizeFileName(orderId)}.pdf`;
+      const uploadedPdfUrl = await uploadPdfToR2({
+        key: r2Key,
+        pdfBuffer: labelPdfBuffer
+      });
+
+      await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).update(orderRecord.id, {
+        "Fulfillment Status": "Requested Label",
+        "Tracking Number": sendcloud.trackingNumber,
+        "Shipping Label": [
+          {
+            url: uploadedPdfUrl,
+            filename: `${sanitizeFileName(orderId)}.pdf`
+          }
+        ]
+      });
+
+      return res.status(200).json({
+        message: `Label is requested for ${orderId} successfully`,
         exists: false,
         matched_unfulfilled_order: true,
-        order_id: firstOrderId
+        order_id: orderId
       });
     }
 
