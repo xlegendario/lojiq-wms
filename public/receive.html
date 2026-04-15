@@ -372,7 +372,9 @@
           throw new Error(data.details || data.error || "Failed to receive parcel");
         }
 
-        if (data.exists) {
+        if (data.message) {
+          showToast(data.message, "success", "Success");
+        } else if (data.exists) {
           showToast(`Parcel ${trackingNumber} marked as Received.`, "success", "Success");
         } else {
           showToast(`Parcel ${trackingNumber} created and marked as Received.`, "success", "Success");
