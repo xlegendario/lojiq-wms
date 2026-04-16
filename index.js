@@ -12,7 +12,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 app.use(express.static(path.join(__dirname, "public")));
-app.use(express.json({ limit: "2mb" }));
+app.use(express.json({ limit: "10mb" }));
 
 const {
   PORT = 3000,
@@ -38,7 +38,8 @@ const {
   R2_ACCESS_KEY_ID,
   R2_SECRET_ACCESS_KEY,
   R2_BUCKET,
-  R2_PUBLIC_BASE_URL
+  R2_PUBLIC_BASE_URL,
+  APP_PUBLIC_BASE_URL
 } = process.env;
 
 if (!AIRTABLE_TOKEN) {
@@ -691,6 +692,53 @@ async function markUnfulfilledOrderLabelError(recordId, errorMessage) {
   });
 }
 
+async function getUnfulfilledOrderRecordById(recordId) {
+  return airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).find(recordId);
+}
+
+function pdfBufferFromDataUrl(dataUrl) {
+  const value = asText(dataUrl);
+
+  const match = value.match(/^data:application\/pdf;base64,(.+)$/);
+
+  if (!match) {
+    throw new Error("Invalid PDF upload format");
+  }
+
+  return Buffer.from(match[1], "base64");
+}
+
+async function updateUnfulfilledOrderManualLabel({
+  recordId,
+  orderId,
+  trackingNumber,
+  pdfBuffer,
+  originalFileName
+}) {
+  const safeOrderId = sanitizeFileName(orderId || recordId || "label");
+  const safeFileName = sanitizeFileName(originalFileName || `${safeOrderId}.pdf`);
+  const r2Key = `shipping-labels/manual-${safeOrderId}-${Date.now()}-${safeFileName}`;
+
+  const uploadedPdfUrl = await uploadPdfToR2({
+    key: r2Key,
+    pdfBuffer
+  });
+
+  await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).update(recordId, {
+    "Tracking Number": trackingNumber,
+    "Shipping Label": [
+      {
+        url: uploadedPdfUrl,
+        filename: safeFileName.endsWith(".pdf") ? safeFileName : `${safeFileName}.pdf`
+      }
+    ],
+    "Fulfillment Status": "Ready to Ship",
+    "Label Error Message": null
+  });
+
+  return uploadedPdfUrl;
+}
+
 async function getBuyerCountryOptions() {
   const token = BUYERS_AIRTABLE_TOKEN || AIRTABLE_TOKEN;
 
@@ -1157,12 +1205,15 @@ app.post("/api/receive-parcel", async (req, res) => {
           "Fulfillment Status": "Requested Label",
           "Label Error Message": null
         });
-
+      
+        const labelRequestUrl = `${asText(APP_PUBLIC_BASE_URL).replace(/\/$/, "")}/label-request.html?record_id=${encodeURIComponent(orderRecord.id)}`;
+      
         return res.status(200).json({
           message: `Label request registered for ${orderId}`,
           exists: false,
           matched_unfulfilled_order: true,
-          order_id: orderId
+          order_id: orderId,
+          label_request_url: labelRequestUrl
         });
       }
 
@@ -1265,6 +1316,100 @@ app.post("/api/receive-parcel", async (req, res) => {
       error: matchedOrderId
         ? `Label generation failed for ${matchedOrderId}`
         : "Failed to process parcel",
+      details: error.message
+    });
+  }
+});
+
+app.get("/api/label-request-order/:recordId", async (req, res) => {
+  try {
+    const recordId = asText(req.params?.recordId);
+
+    if (!recordId) {
+      return res.status(400).json({ error: "Missing recordId" });
+    }
+
+    const record = await getUnfulfilledOrderRecordById(recordId);
+    const fields = record.fields || {};
+
+    return res.status(200).json({
+      ok: true,
+      order: {
+        record_id: record.id,
+        order_id: asText(fields["Order ID"]),
+        shopify_order_number: asText(fields["Shopify Order Number"]),
+        product_name: asText(fields["Product Name"]),
+        size: asText(fields["Size"]),
+        sku: asText(fields["SKU"]),
+        store_name: asText(fields["Store Name"]),
+        fulfillment_status: asText(fields["Fulfillment Status"]),
+        tracking_number: asText(fields["Tracking Number"])
+      }
+    });
+  } catch (error) {
+    console.error("label-request-order failed:", error);
+    return res.status(500).json({
+      error: "Failed to load label request order",
+      details: error.message
+    });
+  }
+});
+
+app.post("/api/label-request-submit", async (req, res) => {
+  try {
+    const recordId = asText(req.body?.record_id);
+    const trackingNumber = asText(req.body?.tracking_number);
+    const fileName = asText(req.body?.file_name);
+    const fileDataUrl = asText(req.body?.file_data_url);
+
+    if (!recordId) {
+      return res.status(400).json({ error: "Missing record_id" });
+    }
+
+    if (!trackingNumber) {
+      return res.status(400).json({ error: "Missing tracking_number" });
+    }
+
+    if (!fileName) {
+      return res.status(400).json({ error: "Missing file_name" });
+    }
+
+    if (!fileDataUrl) {
+      return res.status(400).json({ error: "Missing file_data_url" });
+    }
+
+    const record = await getUnfulfilledOrderRecordById(recordId);
+    const fields = record.fields || {};
+    const orderId = asText(fields["Order ID"]) || record.id;
+
+    const pdfBuffer = pdfBufferFromDataUrl(fileDataUrl);
+
+    await updateUnfulfilledOrderManualLabel({
+      recordId,
+      orderId,
+      trackingNumber,
+      pdfBuffer,
+      originalFileName: fileName
+    });
+
+    return res.status(200).json({
+      ok: true,
+      message: `Label saved for ${orderId}`
+    });
+  } catch (error) {
+    console.error("label-request-submit failed:", error);
+
+    const recordId = asText(req.body?.record_id);
+    if (recordId) {
+      try {
+        await markUnfulfilledOrderLabelError(recordId, error.message);
+      } catch (updateError) {
+        console.error("Failed to save label request error:", updateError);
+      }
+    }
+
+    return res.status(500).json({
+      error: "Failed to submit manual label request",
       details: error.message
     });
   }
