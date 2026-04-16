@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Lojiq WMS - Label Request</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    :root {
+      --bg: #07111F;
+      --panel: #0E2238;
+      --border: #163252;
+      --primary: #2F80ED;
+      --primary-soft: #66B3FF;
+      --text: #DCEBFF;
+      --muted: #8FAECC;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      background:
+        radial-gradient(circle at top, rgba(47,128,237,0.18), transparent 30%),
+        linear-gradient(180deg, #050D18 0%, var(--bg) 100%);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    .topbar {
+      position: absolute;
+      top: 24px;
+      left: 24px;
+    }
+
+    .home-button {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      padding: 16px 28px;
+      border-radius: 14px;
+      text-decoration: none;
+      font-weight: 700;
+      font-size: 18px;
+      color: #DCEBFF;
+      background: linear-gradient(135deg, #2F80ED, #66B3FF);
+      border: 1px solid rgba(102, 179, 255, 0.35);
+    }
+
+    .wrap {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 100px 20px 60px;
+    }
+
+    .page-header {
+      text-align: center;
+      margin-bottom: 30px;
+    }
+
+    .page-title {
+      margin: 0;
+      font-size: 52px;
+      font-weight: 800;
+    }
+
+    .card {
+      background: linear-gradient(180deg, rgba(16,41,68,0.95), rgba(14,34,56,0.95));
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 24px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.28);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+
+    .field-label {
+      font-size: 14px;
+      font-weight: 800;
+      margin-bottom: 8px;
+      color: var(--muted);
+    }
+
+    .field-value,
+    .input {
+      width: 100%;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: rgba(7,17,31,0.45);
+      color: var(--text);
+      padding: 14px;
+      font-size: 15px;
+    }
+
+    .field-value {
+      min-height: 48px;
+      display: flex;
+      align-items: center;
+    }
+
+    .input[type="file"] {
+      padding: 10px 14px;
+      background: rgba(7,17,31,0.7);
+    }
+
+    .actions {
+      margin-top: 20px;
+      display: flex;
+      justify-content: flex-end;
+      gap: 12px;
+    }
+
+    .button {
+      cursor: pointer;
+      border-radius: 12px;
+      border: none;
+      padding: 14px 18px;
+      font-size: 15px;
+      font-weight: 700;
+      background: linear-gradient(135deg, var(--primary), var(--primary-soft));
+      color: white;
+    }
+
+    .button.secondary {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text);
+    }
+
+    .toast-stack {
+      position: fixed;
+      left: 24px;
+      right: 24px;
+      bottom: 24px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+      z-index: 9999;
+      pointer-events: none;
+    }
+
+    .toast {
+      width: min(720px, 100%);
+      border-radius: 10px;
+      box-shadow: 0 14px 30px rgba(0,0,0,0.28);
+      overflow: hidden;
+      pointer-events: auto;
+    }
+
+    .toast.success { background: #DDF5E8; border-bottom: 5px solid #16B364; color: #184B32; }
+    .toast.error { background: #FDE8E8; border-bottom: 5px solid #F04438; color: #5F2120; }
+
+    .toast-inner {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      padding: 16px 18px 14px;
+    }
+
+    .toast-icon {
+      width: 34px;
+      height: 34px;
+      border-radius: 999px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      color: white;
+      flex: 0 0 34px;
+    }
+
+    .toast.success .toast-icon { background: #16B364; }
+    .toast.error .toast-icon { background: #F04438; }
+
+    .toast-title {
+      font-size: 18px;
+      font-weight: 800;
+    }
+
+    .toast-message {
+      font-size: 15px;
+    }
+
+    @media (max-width: 800px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+
+      .actions {
+        flex-direction: column;
+      }
+
+      .actions .button {
+        width: 100%;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <a href="/" class="home-button">Home</a>
+  </div>
+
+  <div class="wrap">
+    <div class="page-header">
+      <h1 class="page-title">Label Request</h1>
+    </div>
+
+    <div class="card">
+      <div class="grid">
+        <div>
+          <div class="field-label">Order ID</div>
+          <div id="orderIdValue" class="field-value">Loading...</div>
+        </div>
+
+        <div>
+          <div class="field-label">Store Name</div>
+          <div id="storeNameValue" class="field-value">Loading...</div>
+        </div>
+
+        <div>
+          <div class="field-label">Shopify Order Number</div>
+          <div id="shopifyOrderNumberValue" class="field-value">Loading...</div>
+        </div>
+
+        <div>
+          <div class="field-label">SKU</div>
+          <div id="skuValue" class="field-value">Loading...</div>
+        </div>
+
+        <div>
+          <div class="field-label">Product Name</div>
+          <div id="productNameValue" class="field-value">Loading...</div>
+        </div>
+
+        <div>
+          <div class="field-label">Size</div>
+          <div id="sizeValue" class="field-value">Loading...</div>
+        </div>
+      </div>
+
+      <div class="grid" style="margin-top: 12px;">
+        <div>
+          <div class="field-label">Tracking Number</div>
+          <input id="trackingNumberInput" class="input" type="text" />
+        </div>
+
+        <div>
+          <div class="field-label">Shipping Label PDF</div>
+          <input id="pdfInput" class="input" type="file" accept="application/pdf" />
+        </div>
+      </div>
+
+      <div class="actions">
+        <button id="submitBtn" class="button">Submit Label</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toastStack" class="toast-stack"></div>
+
+  <script>
+    const orderIdValue = document.getElementById("orderIdValue");
+    const storeNameValue = document.getElementById("storeNameValue");
+    const shopifyOrderNumberValue = document.getElementById("shopifyOrderNumberValue");
+    const skuValue = document.getElementById("skuValue");
+    const productNameValue = document.getElementById("productNameValue");
+    const sizeValue = document.getElementById("sizeValue");
+    const trackingNumberInput = document.getElementById("trackingNumberInput");
+    const pdfInput = document.getElementById("pdfInput");
+    const submitBtn = document.getElementById("submitBtn");
+    const toastStack = document.getElementById("toastStack");
+
+    const params = new URLSearchParams(window.location.search);
+    const recordId = params.get("record_id") || "";
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    function showToast(message, type = "success", title = "") {
+      const toast = document.createElement("div");
+      toast.className = `toast ${type}`;
+
+      const resolvedTitle =
+        title || (type === "success" ? "Success" : "Error");
+
+      const icon = type === "success" ? "✓" : "✕";
+
+      toast.innerHTML = `
+        <div class="toast-inner">
+          <div class="toast-icon">${icon}</div>
+          <div>
+            <div class="toast-title">${escapeHtml(resolvedTitle)}</div>
+            <div class="toast-message">${escapeHtml(message)}</div>
+          </div>
+        </div>
+      `;
+
+      toastStack.appendChild(toast);
+      setTimeout(() => toast.remove(), 5000);
+    }
+
+    function readFileAsDataUrl(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(new Error("Failed to read PDF file"));
+        reader.readAsDataURL(file);
+      });
+    }
+
+    async function loadOrder() {
+      if (!recordId) {
+        throw new Error("Missing record_id in URL");
+      }
+
+      const res = await fetch(`/api/label-request-order/${encodeURIComponent(recordId)}`);
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.details || data.error || "Failed to load order");
+      }
+
+      const order = data.order || {};
+
+      orderIdValue.textContent = order.order_id || "—";
+      storeNameValue.textContent = order.store_name || "—";
+      shopifyOrderNumberValue.textContent = order.shopify_order_number || "—";
+      skuValue.textContent = order.sku || "—";
+      productNameValue.textContent = order.product_name || "—";
+      sizeValue.textContent = order.size || "—";
+      trackingNumberInput.value = order.tracking_number || "";
+    }
+
+    async function submitLabel() {
+      const trackingNumber = trackingNumberInput.value.trim();
+      const file = pdfInput.files?.[0];
+
+      if (!recordId) {
+        showToast("Missing record_id in URL", "error", "Error");
+        return;
+      }
+
+      if (!trackingNumber) {
+        showToast("Tracking Number is required", "error", "Error");
+        return;
+      }
+
+      if (!file) {
+        showToast("Please upload a PDF file", "error", "Error");
+        return;
+      }
+
+      if (file.type !== "application/pdf") {
+        showToast("Only PDF files are allowed", "error", "Error");
+        return;
+      }
+
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Submitting...";
+
+      try {
+        const fileDataUrl = await readFileAsDataUrl(file);
+
+        const res = await fetch("/api/label-request-submit", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            record_id: recordId,
+            tracking_number: trackingNumber,
+            file_name: file.name,
+            file_data_url: fileDataUrl
+          })
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          throw new Error(data.details || data.error || "Failed to submit label");
+        }
+
+        showToast(data.message || "Label submitted successfully", "success", "Success");
+        setTimeout(() => {
+          window.location.reload();
+        }, 1200);
+      } catch (error) {
+        showToast(error.message || "Something went wrong", "error", "Error");
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Submit Label";
+      }
+    }
+
+    submitBtn.addEventListener("click", submitLabel);
+
+    loadOrder().catch((error) => {
+      showToast(error.message || "Failed to load page", "error", "Error");
+    });
+  </script>
+</body>
+</html>
