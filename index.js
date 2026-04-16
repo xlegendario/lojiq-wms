@@ -708,7 +708,9 @@ async function postLabelRequestToDiscordBot({
     throw new Error("Missing DISCORD_BOT_BASE_URL");
   }
 
-  const response = await fetch(`${DISCORD_BOT_BASE_URL.replace(/\/$/, "")}/post-label-request`, {
+  const url = `${DISCORD_BOT_BASE_URL.replace(/\/$/, "")}/post-label-request`;
+
+  const response = await fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
@@ -726,15 +728,25 @@ async function postLabelRequestToDiscordBot({
     })
   });
 
-  const data = await response.json().catch(() => ({}));
+  const rawText = await response.text().catch(() => "");
+  let data = {};
+
+  try {
+    data = rawText ? JSON.parse(rawText) : {};
+  } catch {
+    data = {};
+  }
 
   if (!response.ok) {
-    throw new Error(data.details || data.error || "Failed to post label request to Discord bot");
+    throw new Error(
+      data.details ||
+      data.error ||
+      `Discord bot returned ${response.status}: ${rawText || "No response body"}`
+    );
   }
 
   return data;
 }
-
 async function getUnfulfilledOrderRecordById(recordId) {
   return airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).find(recordId);
 }
