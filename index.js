@@ -39,7 +39,8 @@ const {
   R2_SECRET_ACCESS_KEY,
   R2_BUCKET,
   R2_PUBLIC_BASE_URL,
-  APP_PUBLIC_BASE_URL
+  APP_PUBLIC_BASE_URL,
+  DISCORD_BOT_BASE_URL
 } = process.env;
 
 if (!AIRTABLE_TOKEN) {
@@ -692,6 +693,48 @@ async function markUnfulfilledOrderLabelError(recordId, errorMessage) {
   });
 }
 
+async function postLabelRequestToDiscordBot({
+  channelId,
+  recordId,
+  orderId,
+  shopifyOrderNumber,
+  productName,
+  sku,
+  size,
+  storeName,
+  labelRequestUrl
+}) {
+  if (!DISCORD_BOT_BASE_URL) {
+    throw new Error("Missing DISCORD_BOT_BASE_URL");
+  }
+
+  const response = await fetch(`${DISCORD_BOT_BASE_URL.replace(/\/$/, "")}/post-label-request`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      channel_id: channelId,
+      record_id: recordId,
+      order_id: orderId,
+      shopify_order_number: shopifyOrderNumber,
+      product_name: productName,
+      sku,
+      size,
+      store_name: storeName,
+      label_request_url: labelRequestUrl
+    })
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(data.details || data.error || "Failed to post label request to Discord bot");
+  }
+
+  return data;
+}
+
 async function getUnfulfilledOrderRecordById(recordId) {
   return airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).find(recordId);
 }
@@ -1158,6 +1201,9 @@ app.post("/api/receive-parcel", async (req, res) => {
           "Shopify Order ID",
           "Shopify Order Number",
           "Store Name",
+          "Product Name",
+          "SKU",
+          "Size",
           "Shipping Label",
           "Tracking Number"
         ],
@@ -1197,16 +1243,43 @@ app.post("/api/receive-parcel", async (req, res) => {
 
       const merchantRecord = await airtable(AIRTABLE_MERCHANTS_TABLE).find(clientId);
       const merchantFields = merchantRecord.fields || {};
-
+      
       const labelsOnContract = !!merchantFields["Labels On Contract?"];
+      const labelRequestChannelId = asText(merchantFields["Label Request Channel ID"]);
+      const sendcloudSenderAddressId = asText(merchantFields["Sendcloud Sender Address ID"]);
+      const senderDisplayName = asText(merchantFields["Sender Display Name"]);
 
       if (!labelsOnContract) {
+        if (!labelRequestChannelId) {
+          throw new Error(`Missing Label Request Channel ID for merchant linked to order ${orderId}`);
+        }
+      
+        if (!APP_PUBLIC_BASE_URL) {
+          throw new Error("Missing APP_PUBLIC_BASE_URL");
+        }
+      
+        const productName = asText(orderFields["Product Name"]);
+        const sku = asText(orderFields["SKU"]);
+        const size = asText(orderFields["Size"]);
+        const shopifyOrderNumber = asText(orderFields["Shopify Order Number"]);
+        const labelRequestUrl = `${asText(APP_PUBLIC_BASE_URL).replace(/\/$/, "")}/label-request.html?record_id=${encodeURIComponent(orderRecord.id)}`;
+      
         await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).update(orderRecord.id, {
           "Fulfillment Status": "Requested Label",
           "Label Error Message": null
         });
       
-        const labelRequestUrl = `${asText(APP_PUBLIC_BASE_URL).replace(/\/$/, "")}/label-request.html?record_id=${encodeURIComponent(orderRecord.id)}`;
+        await postLabelRequestToDiscordBot({
+          channelId: labelRequestChannelId,
+          recordId: orderRecord.id,
+          orderId,
+          shopifyOrderNumber,
+          productName,
+          sku,
+          size,
+          storeName: asText(orderFields["Store Name"]) || asText(merchantFields["Store Name"]),
+          labelRequestUrl
+        });
       
         return res.status(200).json({
           message: `Label request registered for ${orderId}`,
