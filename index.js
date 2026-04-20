@@ -75,6 +75,23 @@ function asText(value) {
   return String(value).trim();
 }
 
+const sellerCodeCache = new Map();
+
+async function getSellerCodeFromRecordId(sellerRecordId) {
+  if (!sellerRecordId) return "";
+
+  if (sellerCodeCache.has(sellerRecordId)) {
+    return sellerCodeCache.get(sellerRecordId);
+  }
+
+  const record = await airtable(AIRTABLE_SELLERS_TABLE).find(sellerRecordId);
+  const sellerCode = asText(record.fields["Seller ID"]);
+
+  sellerCodeCache.set(sellerRecordId, sellerCode);
+
+  return sellerCode;
+}
+
 function escapeFormulaValue(value) {
   return asText(value).replace(/'/g, "\\'");
 }
@@ -458,9 +475,38 @@ function parseTrackingNumbers(value) {
     .filter(Boolean);
 }
 
-function isWarehouseItemId(itemId) {
-  const value = asText(itemId).toUpperCase();
-  return value.startsWith("PCS-") || value.startsWith("KC-") || value.startsWith("RSC-");
+async function isWarehouseItem(inventoryRecord) {
+  const itemId = asText(inventoryRecord?.fields["Item ID"]).toUpperCase();
+
+  const sellerRecordIds = Array.isArray(inventoryRecord?.fields["Seller ID"])
+    ? inventoryRecord.fields["Seller ID"]
+    : [];
+
+  // Always allowed
+  if (
+    itemId.startsWith("PCS-") ||
+    itemId.startsWith("KC-") ||
+    itemId.startsWith("RSC-")
+  ) {
+    return true;
+  }
+
+  // Conditional OUT-
+  if (itemId.startsWith("OUT-")) {
+    const allowedSellerCodes = ["SE-00537", "SE-00309"];
+
+    for (const sellerRecordId of sellerRecordIds) {
+      const sellerCode = await getSellerCodeFromRecordId(sellerRecordId);
+
+      if (allowedSellerCodes.includes(sellerCode)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  return false;
 }
 
 async function getPackShipOutboundOptions() {
@@ -568,10 +614,16 @@ async function getPackShipOutboundOptions() {
       ? record.fields["Linked Inventory Unit"]
       : [];
 
-    const warehouseInventoryUnitIds = linkedInventoryUnitIds.filter((id) => {
+    const warehouseInventoryUnitIds = [];
+
+    for (const id of linkedInventoryUnitIds) {
       const inventoryRecord = inventoryUnitsById.get(id);
-      return inventoryRecord && isWarehouseItemId(inventoryRecord.fields["Item ID"]);
-    });
+      if (!inventoryRecord) continue;
+    
+      if (await isWarehouseItem(inventoryRecord)) {
+        warehouseInventoryUnitIds.push(id);
+      }
+    }
 
     if (!warehouseInventoryUnitIds.length) continue;
 
@@ -867,9 +919,15 @@ async function getPackShipOutboundDetails(outboundId, sourceTable) {
       linkedInventoryUnitIds.map((id) => airtable(AIRTABLE_INVENTORY_UNITS_TABLE).find(id))
     );
 
-    const items = inventoryUnitRecords
-      .filter((itemRecord) => isWarehouseItemId(itemRecord.fields["Item ID"]))
-      .map((itemRecord) => ({
+    const filteredItems = [];
+
+    for (const itemRecord of inventoryUnitRecords) {
+      if (await isWarehouseItem(itemRecord)) {
+        filteredItems.push(itemRecord);
+      }
+    }
+    
+    const items = filteredItems.map((itemRecord) => ({
         id: itemRecord.id,
         gtin: asText(itemRecord.fields["Product GTIN"]),
         product_name: asText(itemRecord.fields["Product Name"]),
@@ -1606,9 +1664,14 @@ app.post("/api/submit-pack-ship", async (req, res) => {
           linkedIds.map((id) => airtable(AIRTABLE_INVENTORY_UNITS_TABLE).find(id))
         );
 
-        const hasWarehouseItem = inventoryUnitRecords.some((itemRecord) =>
-          isWarehouseItemId(itemRecord.fields["Item ID"])
-        );
+        let hasWarehouseItem = false;
+
+        for (const itemRecord of inventoryUnitRecords) {
+          if (await isWarehouseItem(itemRecord)) {
+            hasWarehouseItem = true;
+            break;
+          }
+        }
 
         if (hasWarehouseItem) {
           matchingRecordIds.push(record.id);
