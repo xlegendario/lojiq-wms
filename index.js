@@ -85,7 +85,7 @@ async function getSellerCodeFromRecordId(sellerRecordId) {
   }
 
   const record = await airtable(AIRTABLE_SELLERS_TABLE).find(sellerRecordId);
-  const sellerCode = asText(record.fields["Seller ID"]).trim().toUpperCase();
+  const sellerCode = asText(record.fields["Seller ID"]);
 
   sellerCodeCache.set(sellerRecordId, sellerCode);
 
@@ -493,7 +493,7 @@ async function isWarehouseItem(inventoryRecord) {
 
   // Conditional OUT-
   if (itemId.startsWith("OUT-")) {
-    const allowedSellerCodes = ["SE-00537", "SE-00309", "SE-00781"].map((v) => v.toUpperCase());
+    const allowedSellerCodes = ["SE-00537", "SE-00309", "SE-00781"];
 
     for (const sellerRecordId of sellerRecordIds) {
       const sellerCode = await getSellerCodeFromRecordId(sellerRecordId);
