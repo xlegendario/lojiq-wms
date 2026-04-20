@@ -493,7 +493,7 @@ async function isWarehouseItem(inventoryRecord) {
 
   // Conditional OUT-
   if (itemId.startsWith("OUT-")) {
-    const allowedSellerCodes = ["SE-00537", "SE-00309"];
+    const allowedSellerCodes = ["SE-00537", "SE-00309", "SE-00781"];
 
     for (const sellerRecordId of sellerRecordIds) {
       const sellerCode = await getSellerCodeFromRecordId(sellerRecordId);
