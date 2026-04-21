@@ -157,11 +157,17 @@
 
     .list-row {
       display: grid;
-      grid-template-columns: 1fr auto;
+      grid-template-columns: 1fr auto auto;
       gap: 12px;
       padding: 12px 14px;
       border-bottom: 1px solid rgba(22,50,82,0.85);
       font-size: 14px;
+      align-items: center;
+    }
+
+    .add-one-btn {
+      min-width: 44px;
+      padding: 10px 12px;
     }
 
     .list-row:last-child {
@@ -467,6 +473,15 @@
             <div class="meta">${escapeHtml(item.sku)} / ${escapeHtml(item.size)} / ${escapeHtml(item.gtin || "—")}</div>
           </div>
           <div>${item.quantity}x</div>
+          <div>
+            <button
+              class="button secondary add-one-btn"
+              type="button"
+              data-add-one-key="${escapeHtml(getItemGroupKey(item))}"
+            >
+              +
+            </button>
+          </div>
         </div>
       `).join("");
     }
@@ -619,6 +634,36 @@
       showToast(`Packed ${item.product_name || item.gtin} into ${trackingNumber}.`, "success", "Success");
     }
 
+    function addOneItemToCurrentParcelByKey(itemGroupKey) {
+      if (!currentOutbound) {
+        showToast("Select an outbound first.", "warning", "Warning");
+        return;
+      }
+    
+      const trackingNumber = currentOutbound.source_table === "unfulfilled_orders_log"
+        ? "ORDER"
+        : trackingSelect.value;
+    
+      if (!trackingNumber) {
+        showToast("Select a tracking number first.", "warning", "Warning");
+        return;
+      }
+    
+      const itemIndex = unpacked.findIndex((item) => getItemGroupKey(item) === itemGroupKey);
+    
+      if (itemIndex === -1) {
+        showToast("This item is not available to pack or is already packed.", "warning", "Warning");
+        return;
+      }
+    
+      const [item] = unpacked.splice(itemIndex, 1);
+      assignments[trackingNumber].push(item);
+    
+      renderUnpacked();
+      renderAssignments();
+      showToast(`Packed ${item.product_name || item.gtin} into ${trackingNumber}.`, "success", "Success");
+    }
+
     async function submitPackedOutbound() {
       if (!currentOutbound) {
         showToast("Select an outbound first.", "warning", "Warning");
@@ -678,6 +723,14 @@
 
     trackingSelect.addEventListener("change", () => {
       renderAssignments();
+      focusScanner();
+    });
+
+    unpackedItems.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-add-one-key]");
+      if (!button) return;
+    
+      addOneItemToCurrentParcelByKey(button.dataset.addOneKey);
       focusScanner();
     });
 
