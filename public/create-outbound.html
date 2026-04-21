@@ -847,7 +847,11 @@
     }
 
     function addOrIncrementItem(data) {
-      const existing = items.find((item) => item.gtin === data.gtin);
+      const existing = items.find((item) =>
+        item.sku.trim().toUpperCase() === data.sku.trim().toUpperCase() &&
+        item.size.trim() === data.size.trim() &&
+        (item.gtin || "") === (data.gtin || "")
+      );
 
       if (existing) {
         if (existing.quantity >= existing.availableQuantity) {
