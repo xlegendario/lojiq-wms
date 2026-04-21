@@ -573,7 +573,8 @@ async function getPackShipOutboundOptions() {
         "Fulfillment Status",
         "Shipping Status",
         "Linked Inventory Unit",
-        "Shipping Label"
+        "Shipping Label",
+        "Tracking Number"
       ],
       filterByFormula: `AND(
         {Fulfillment Status} = 'Ready to Ship',
@@ -687,37 +688,49 @@ async function getPackShipOutboundOptions() {
 
   for (const record of unfulfilledRecords) {
     const shopifyOrderNumber = asText(record.fields["Shopify Order Number"]);
+    const trackingNumber = asText(record.fields["Tracking Number"]);
     const storeName = asText(record.fields["Store Name"]);
     const linkedInventoryUnitIds = Array.isArray(record.fields["Linked Inventory Unit"])
       ? record.fields["Linked Inventory Unit"]
       : [];
-
+  
     const warehouseInventoryUnitIds = [];
-
+  
     for (const id of linkedInventoryUnitIds) {
       const inventoryRecord = inventoryUnitsById.get(id);
       if (!inventoryRecord) continue;
-    
+  
       if (isWarehouseItemFast(inventoryRecord, sellerCodeById)) {
         warehouseInventoryUnitIds.push(id);
       }
     }
-
+  
     if (!warehouseInventoryUnitIds.length) continue;
-
-    const groupKey = `${shopifyOrderNumber}||${storeName}`;
-
+  
+    const hasTrackingNumber = !!trackingNumber;
+    const groupKey = hasTrackingNumber
+      ? `tracking||${trackingNumber}||${storeName}`
+      : `shopify||${shopifyOrderNumber}||${storeName}`;
+  
     if (!groupedOrders.has(groupKey)) {
+      const primaryLabel = hasTrackingNumber
+        ? trackingNumber
+        : (shopifyOrderNumber || record.id);
+  
+      const secondaryLabel = shopifyOrderNumber && hasTrackingNumber
+        ? `${storeName || "Unknown Store"} / Order ${shopifyOrderNumber}`
+        : (storeName || "Unknown Store");
+  
       groupedOrders.set(groupKey, {
         id: groupKey,
         source_table: "unfulfilled_orders_log",
-        label: `${shopifyOrderNumber || record.id} - ${storeName || "Unknown Store"}`,
+        label: `${primaryLabel} - ${secondaryLabel}`,
         shipping_status: asText(record.fields["Shipping Status"]) || "Pending",
         tracking_numbers_count: 1
       });
     }
   }
-
+  
   return [...salesOptions, ...forwardingOptions, ...Array.from(groupedOrders.values())];
 }
 
@@ -1016,12 +1029,22 @@ async function getBuyerCountryOptions() {
 
 async function getPackShipOutboundDetails(outboundId, sourceTable) {
   if (sourceTable === "unfulfilled_orders_log") {
-    const [shopifyOrderNumber, storeName] = outboundId.split("||");
-
+    const [groupType, groupValue, storeName] = outboundId.split("||");
+  
+    if (!groupType || !groupValue) {
+      throw new Error("Invalid unfulfilled outbound id");
+    }
+  
+    const groupFilter =
+      groupType === "tracking"
+        ? `TRIM({Tracking Number} & '') = '${escapeFormulaValue(groupValue)}'`
+        : `TRIM({Shopify Order Number} & '') = '${escapeFormulaValue(groupValue)}'`;
+  
     const records = await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE)
       .select({
         fields: [
           "Shopify Order Number",
+          "Tracking Number",
           "Store Name",
           "Fulfillment Status",
           "Shipping Status",
@@ -1029,8 +1052,8 @@ async function getPackShipOutboundDetails(outboundId, sourceTable) {
           "Shipping Label"
         ],
         filterByFormula: `AND(
-          TRIM({Shopify Order Number} & '') = '${escapeFormulaValue(shopifyOrderNumber)}',
-          TRIM({Store Name} & '') = '${escapeFormulaValue(storeName)}',
+          ${groupFilter},
+          TRIM({Store Name} & '') = '${escapeFormulaValue(storeName || "")}',
           {Fulfillment Status} = 'Ready to Ship',
           OR(
             {Shipping Status} = BLANK(),
@@ -1080,7 +1103,7 @@ async function getPackShipOutboundDetails(outboundId, sourceTable) {
       id: outboundId,
       source_table: "unfulfilled_orders_log",
       shipping_status: "Ready To Ship",
-      tracking_numbers: ["ORDER"],
+      tracking_numbers: [groupType === "tracking" ? groupValue : "ORDER"],
       shipping_labels: firstLabelRecord && Array.isArray(firstLabelRecord.fields["Shipping Label"])
         ? firstLabelRecord.fields["Shipping Label"]
         : [],
@@ -1765,20 +1788,30 @@ app.post("/api/submit-pack-ship", async (req, res) => {
     }
 
     if (sourceTable === "unfulfilled_orders_log") {
-      const [shopifyOrderNumber, storeName] = outboundId.split("||");
-
+      const [groupType, groupValue, storeName] = outboundId.split("||");
+    
+      if (!groupType || !groupValue) {
+        return res.status(400).json({ error: "Invalid unfulfilled outbound_id" });
+      }
+    
+      const groupFilter =
+        groupType === "tracking"
+          ? `TRIM({Tracking Number} & '') = '${escapeFormulaValue(groupValue)}'`
+          : `TRIM({Shopify Order Number} & '') = '${escapeFormulaValue(groupValue)}'`;
+    
       const records = await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE)
         .select({
           fields: [
             "Shopify Order Number",
+            "Tracking Number",
             "Store Name",
             "Fulfillment Status",
             "Shipping Status",
             "Linked Inventory Unit"
           ],
           filterByFormula: `AND(
-            TRIM({Shopify Order Number} & '') = '${escapeFormulaValue(shopifyOrderNumber)}',
-            TRIM({Store Name} & '') = '${escapeFormulaValue(storeName)}',
+            ${groupFilter},
+            TRIM({Store Name} & '') = '${escapeFormulaValue(storeName || "")}',
             {Fulfillment Status} = 'Ready to Ship',
             OR(
               {Shipping Status} = BLANK(),
@@ -1788,35 +1821,35 @@ app.post("/api/submit-pack-ship", async (req, res) => {
           )`
         })
         .all();
-
+    
       const matchingRecordIds = [];
-
+    
       for (const record of records) {
         const linkedIds = Array.isArray(record.fields["Linked Inventory Unit"])
           ? record.fields["Linked Inventory Unit"]
           : [];
-
+    
         const inventoryUnitRecords = await Promise.all(
           linkedIds.map((id) => airtable(AIRTABLE_INVENTORY_UNITS_TABLE).find(id))
         );
-
+    
         let hasWarehouseItem = false;
-
+    
         for (const itemRecord of inventoryUnitRecords) {
           if (await isWarehouseItem(itemRecord)) {
             hasWarehouseItem = true;
             break;
           }
         }
-
+    
         if (hasWarehouseItem) {
           matchingRecordIds.push(record.id);
         }
       }
-
+    
       for (let i = 0; i < matchingRecordIds.length; i += 10) {
         const batch = matchingRecordIds.slice(i, i + 10);
-
+    
         await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).update(
           batch.map((id) => ({
             id,
@@ -1826,9 +1859,9 @@ app.post("/api/submit-pack-ship", async (req, res) => {
           }))
         );
       }
-
+    
       await updateInventoryUnitsToSold(packedInventoryUnitIds);
-
+    
       return res.status(200).json({
         ok: true
       });
