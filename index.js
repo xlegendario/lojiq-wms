@@ -1745,7 +1745,7 @@ app.post("/api/submit-pack-ship", async (req, res) => {
         let hasWarehouseItem = false;
 
         for (const itemRecord of inventoryUnitRecords) {
-          if (isWarehouseItemFast(itemRecord)) {
+          if (await isWarehouseItem(itemRecord)) {
             hasWarehouseItem = true;
             break;
           }
