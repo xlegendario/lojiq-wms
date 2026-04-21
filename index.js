@@ -1685,7 +1685,7 @@ app.post("/api/submit-pack-ship", async (req, res) => {
           batch.map((id) => ({
             id,
             fields: {
-              "Shipping Status": "Shipped"
+              "Fulfillment Status": "Fulfilled"
             }
           }))
         );
