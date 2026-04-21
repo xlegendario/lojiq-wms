@@ -475,6 +475,37 @@ function parseTrackingNumbers(value) {
     .filter(Boolean);
 }
 
+// 👇 PASTE HERE
+function isWarehouseItemFast(inventoryRecord, sellerCodeById) {
+  const itemId = asText(inventoryRecord.fields["Item ID"]).toUpperCase();
+
+  if (
+    itemId.startsWith("PCS-") ||
+    itemId.startsWith("KC-") ||
+    itemId.startsWith("RSC-")
+  ) {
+    return true;
+  }
+
+  if (itemId.startsWith("OUT-")) {
+    const allowedSellerCodes = ["SE-00537", "SE-00309", "SE-00781"];
+
+    const sellerRecordIds = Array.isArray(inventoryRecord.fields["Seller ID"])
+      ? inventoryRecord.fields["Seller ID"]
+      : [];
+
+    for (const sellerRecordId of sellerRecordIds) {
+      const sellerCode = sellerCodeById?.get(sellerRecordId);
+
+      if (allowedSellerCodes.includes(sellerCode)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
 async function isWarehouseItem(inventoryRecord) {
   const itemId = asText(inventoryRecord?.fields["Item ID"]).toUpperCase();
 
@@ -654,34 +685,6 @@ async function getPackShipOutboundOptions() {
   
   const groupedOrders = new Map();
 
-  function isWarehouseItemFast(inventoryRecord) {
-    const itemId = asText(inventoryRecord.fields["Item ID"]).toUpperCase();
-  
-    // Always allowed
-    if (itemId.startsWith("PCS-") || itemId.startsWith("KC-") || itemId.startsWith("RSC-")) {
-      return true;
-    }
-  
-    // Conditional OUT-
-    if (itemId.startsWith("OUT-")) {
-      const allowedSellerCodes = ["SE-00537", "SE-00309", "SE-00781"];
-  
-      const sellerRecordIds = Array.isArray(inventoryRecord.fields["Seller ID"])
-        ? inventoryRecord.fields["Seller ID"]
-        : [];
-  
-      for (const sellerRecordId of sellerRecordIds) {
-        const sellerCode = sellerCodeById.get(sellerRecordId);
-  
-        if (allowedSellerCodes.includes(sellerCode)) {
-          return true;
-        }
-      }
-    }
-  
-    return false;
-  }
-
   for (const record of unfulfilledRecords) {
     const shopifyOrderNumber = asText(record.fields["Shopify Order Number"]);
     const storeName = asText(record.fields["Store Name"]);
@@ -695,7 +698,7 @@ async function getPackShipOutboundOptions() {
       const inventoryRecord = inventoryUnitsById.get(id);
       if (!inventoryRecord) continue;
     
-      if (isWarehouseItemFast(inventoryRecord)) {
+      if (isWarehouseItemFast(inventoryRecord, sellerCodeById)) {
         warehouseInventoryUnitIds.push(id);
       }
     }
