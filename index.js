@@ -965,7 +965,20 @@ async function updateUnfulfilledOrderManualLabel({
     "Fulfillment Status": "Ready to Ship",
     "Label Error Message": null
   });
-
+  
+  const updatedRecord = await getUnfulfilledOrderRecordById(recordId);
+  const updatedFields = updatedRecord.fields || {};
+  const claimedChannelId = asText(updatedFields["Claimed Channel ID"]);
+  
+  if (claimedChannelId) {
+    await sendFinalLabelToDiscordChannel({
+      channelId: claimedChannelId,
+      orderId,
+      trackingNumber,
+      labelUrl: uploadedPdfUrl
+    });
+  }
+  
   return uploadedPdfUrl;
 }
 
@@ -2377,6 +2390,17 @@ app.post("/api/request-label", async (req, res) => {
     const orderRecord = await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).find(recordId);
     const orderFields = orderRecord.fields || {};
     const orderId = asText(orderFields["Order ID"]) || orderRecord.id;
+
+    const existingTrackingNumber = asText(orderFields["Tracking Number"]);
+    const existingShippingLabel = Array.isArray(orderFields["Shipping Label"])
+      ? orderFields["Shipping Label"]
+      : [];
+    
+    if (existingTrackingNumber || existingShippingLabel.length > 0) {
+      return res.status(400).json({
+        error: `A label already exists for ${orderId}`
+      });
+    }
 
     const clientId = first(orderFields["Client"]);
     if (!clientId) {
