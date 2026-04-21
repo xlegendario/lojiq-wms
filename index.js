@@ -664,7 +664,7 @@ async function getPackShipOutboundOptions() {
   
     // Conditional OUT-
     if (itemId.startsWith("OUT-")) {
-      const allowedSellerCodes = ["SE-00537", "SE-00309"];
+      const allowedSellerCodes = ["SE-00537", "SE-00309", "SE-00781"];
   
       const sellerRecordIds = Array.isArray(inventoryRecord.fields["Seller ID"])
         ? inventoryRecord.fields["Seller ID"]
