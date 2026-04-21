@@ -997,7 +997,7 @@ async function getPackShipOutboundDetails(outboundId, sourceTable) {
     const filteredItems = [];
 
     for (const itemRecord of inventoryUnitRecords) {
-      if (await isWarehouseItem(itemRecord)) {
+      if (isWarehouseItemFast(itemRecord)) {
         filteredItems.push(itemRecord);
       }
     }
@@ -1742,7 +1742,7 @@ app.post("/api/submit-pack-ship", async (req, res) => {
         let hasWarehouseItem = false;
 
         for (const itemRecord of inventoryUnitRecords) {
-          if (await isWarehouseItem(itemRecord)) {
+          if (isWarehouseItemFast(itemRecord)) {
             hasWarehouseItem = true;
             break;
           }
