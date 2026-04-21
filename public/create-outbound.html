@@ -1110,6 +1110,32 @@
       scanInput.focus();
     });
 
+    itemsTableBody.addEventListener("input", (event) => {
+      const input = event.target;
+    
+      if (input.dataset.field !== "quantity") return;
+    
+      const index = Number(input.dataset.index);
+      if (!Number.isInteger(index) || !items[index]) return;
+    
+      let value = Number(input.value);
+    
+      if (!Number.isFinite(value) || value < 1) {
+        value = 1;
+      }
+    
+      if (value > items[index].availableQuantity) {
+        value = items[index].availableQuantity;
+      }
+    
+      items[index].quantity = value;
+
+      // 👇 ADD THIS LINE HERE
+      input.value = items[index].quantity;
+    
+      renderTable();
+    });
+
     shippingLabelsInput.addEventListener("input", renderSummaryTotals);
     shippingCostsInput.addEventListener("input", renderSummaryTotals);
     totalSellingPriceInput.addEventListener("input", renderSummaryTotals);
