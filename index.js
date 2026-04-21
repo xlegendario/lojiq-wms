@@ -823,6 +823,51 @@ async function markUnfulfilledOrderLabelError(recordId, errorMessage) {
   });
 }
 
+async function sendFinalLabelToDiscordChannel({
+  channelId,
+  orderId,
+  trackingNumber,
+  labelUrl
+}) {
+  if (!DISCORD_BOT_BASE_URL) {
+    throw new Error("Missing DISCORD_BOT_BASE_URL");
+  }
+
+  const url = `${DISCORD_BOT_BASE_URL.replace(/\/$/, "")}/send-label-to-channel`;
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      channel_id: channelId,
+      order_id: orderId,
+      tracking_number: trackingNumber,
+      label_url: labelUrl
+    })
+  });
+
+  const rawText = await response.text().catch(() => "");
+  let data = {};
+
+  try {
+    data = rawText ? JSON.parse(rawText) : {};
+  } catch {
+    data = {};
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      data.details ||
+      data.error ||
+      `Discord bot returned ${response.status}: ${rawText || "No response body"}`
+    );
+  }
+
+  return data;
+}
+
 async function postLabelRequestToDiscordBot({
   channelId,
   recordId,
@@ -2307,6 +2352,155 @@ app.post("/api/submit-outbound", async (req, res) => {
     console.error("submit-outbound failed:", error);
     return res.status(500).json({
       error: "Failed to submit outbound",
+      details: error.message
+    });
+  }
+});
+
+app.post("/api/request-label", async (req, res) => {
+  try {
+    const source = asText(req.body?.source);
+    const recordId = asText(req.body?.record_id);
+
+    if (!source) {
+      return res.status(400).json({ error: "Missing source" });
+    }
+
+    if (!recordId) {
+      return res.status(400).json({ error: "Missing record_id" });
+    }
+
+    if (source !== "quick_deal") {
+      return res.status(400).json({ error: "Unsupported source" });
+    }
+
+    const orderRecord = await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).find(recordId);
+    const orderFields = orderRecord.fields || {};
+    const orderId = asText(orderFields["Order ID"]) || orderRecord.id;
+
+    const clientId = first(orderFields["Client"]);
+    if (!clientId) {
+      throw new Error(`The Order ${orderId} has no linked Client`);
+    }
+
+    const claimedChannelId = asText(orderFields["Claimed Channel ID"]);
+    if (!claimedChannelId) {
+      throw new Error(`Missing Claimed Channel ID for order ${orderId}`);
+    }
+
+    const merchantRecord = await airtable(AIRTABLE_MERCHANTS_TABLE).find(clientId);
+    const merchantFields = merchantRecord.fields || {};
+
+    const labelsOnContract = !!merchantFields["Labels On Contract?"];
+    const labelRequestChannelId = asText(merchantFields["Label Request Channel ID"]);
+
+    if (!labelsOnContract) {
+      if (!labelRequestChannelId) {
+        throw new Error(`Missing Label Request Channel ID for merchant linked to order ${orderId}`);
+      }
+
+      if (!APP_PUBLIC_BASE_URL) {
+        throw new Error("Missing APP_PUBLIC_BASE_URL");
+      }
+
+      const labelRequestUrl =
+        `${asText(APP_PUBLIC_BASE_URL).replace(/\/$/, "")}/label-request.html?record_id=${encodeURIComponent(orderRecord.id)}`;
+
+      await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).update(orderRecord.id, {
+        "Fulfillment Status": "Requested Label",
+        "Label Error Message": null
+      });
+
+      await postLabelRequestToDiscordBot({
+        channelId: labelRequestChannelId,
+        recordId: orderRecord.id,
+        orderId,
+        shopifyOrderNumber: asText(orderFields["Shopify Order Number"]),
+        productName: asText(orderFields["Product Name"]),
+        sku: asText(orderFields["SKU"]),
+        size: asText(orderFields["Size"]),
+        storeName: asText(orderFields["Store Name"]) || asText(merchantFields["Store Name"]),
+        labelRequestUrl
+      });
+
+      return res.status(200).json({
+        ok: true,
+        message: `Manual label request sent for ${orderId}`
+      });
+    }
+
+    const shopDomain = asText(merchantFields["Shopify Store URL"])
+      .replace(/^https?:\/\//, "")
+      .replace(/\/$/, "");
+
+    const accessToken = asText(merchantFields["Shopify Token"]);
+    const shopifyOrderId = asText(orderFields["Shopify Order ID"]);
+    const storeName = asText(orderFields["Store Name"]) || asText(merchantFields["Store Name"]);
+    const shopifyOrderNumber = asText(orderFields["Shopify Order Number"]);
+
+    if (!shopDomain) throw new Error(`Missing Shopify Store URL for merchant linked to order ${orderId}`);
+    if (!accessToken) throw new Error(`Missing Shopify Token for merchant linked to order ${orderId}`);
+    if (!shopifyOrderId) throw new Error(`Missing Shopify Order ID on order ${orderId}`);
+
+    const shopifyOrder = await getShopifyOrder({
+      shopDomain,
+      accessToken,
+      orderId: shopifyOrderId
+    });
+
+    const customerAddress = extractCustomerAddress(shopifyOrder);
+
+    if (!customerAddress.houseNumber) {
+      throw new Error(`Customer address is missing a detectable house number for order ${orderId}`);
+    }
+
+    const shippingOptionCode = await getOutboundShippingOptionCode(customerAddress.country);
+
+    const sendcloud = await createSendcloudLabel({
+      customerAddress,
+      shippingOptionCode,
+      orderId,
+      storeName,
+      shopifyOrderNumber
+    });
+
+    const labelPdfBuffer = await fetchBuffer(sendcloud.labelUrl, {
+      Authorization: buildBasicAuthHeader(SENDCLOUD_PUBLIC_KEY, SENDCLOUD_SECRET_KEY)
+    });
+
+    const r2Key = `shipping-labels/${sanitizeFileName(orderId)}.pdf`;
+    const uploadedPdfUrl = await uploadPdfToR2({
+      key: r2Key,
+      pdfBuffer: labelPdfBuffer
+    });
+
+    await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).update(orderRecord.id, {
+      "Fulfillment Status": "Requested Label",
+      "Tracking Number": sendcloud.trackingNumber,
+      "Shipping Label": [
+        {
+          url: uploadedPdfUrl,
+          filename: `${sanitizeFileName(orderId)}.pdf`
+        }
+      ],
+      "Label Error Message": null
+    });
+
+    await sendFinalLabelToDiscordChannel({
+      channelId: claimedChannelId,
+      orderId,
+      trackingNumber: sendcloud.trackingNumber,
+      labelUrl: uploadedPdfUrl
+    });
+
+    return res.status(200).json({
+      ok: true,
+      message: `Label created for ${orderId}`
+    });
+  } catch (error) {
+    console.error("request-label failed:", error);
+    return res.status(500).json({
+      error: "Failed to request label",
       details: error.message
     });
   }
