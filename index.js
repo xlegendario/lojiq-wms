@@ -713,25 +713,37 @@ async function getPackShipOutboundOptions() {
       : `shopify||${shopifyOrderNumber}||${storeName}`;
   
     if (!groupedOrders.has(groupKey)) {
-      const primaryLabel = hasTrackingNumber
-        ? trackingNumber
-        : (shopifyOrderNumber || record.id);
-  
-      const secondaryLabel = shopifyOrderNumber && hasTrackingNumber
-        ? `${storeName || "Unknown Store"} / Order ${shopifyOrderNumber}`
-        : (storeName || "Unknown Store");
-  
       groupedOrders.set(groupKey, {
         id: groupKey,
         source_table: "unfulfilled_orders_log",
-        label: `${primaryLabel} - ${secondaryLabel}`,
         shipping_status: asText(record.fields["Shipping Status"]) || "Pending",
-        tracking_numbers_count: 1
+        tracking_numbers_count: 1,
+        store_name: storeName || "Unknown Store",
+        order_numbers: new Set()
       });
+    }
+  
+    if (shopifyOrderNumber) {
+      groupedOrders.get(groupKey).order_numbers.add(shopifyOrderNumber);
     }
   }
   
-  return [...salesOptions, ...forwardingOptions, ...Array.from(groupedOrders.values())];
+  const unfulfilledOptions = Array.from(groupedOrders.values()).map((group) => {
+    const orderNumbers = Array.from(group.order_numbers);
+    const orderNumbersText = orderNumbers.length
+      ? orderNumbers.join(", ")
+      : "No Order Number";
+  
+    return {
+      id: group.id,
+      source_table: group.source_table,
+      label: `${group.store_name} / ${orderNumbersText}`,
+      shipping_status: group.shipping_status,
+      tracking_numbers_count: group.tracking_numbers_count
+    };
+  });
+  
+  return [...salesOptions, ...forwardingOptions, ...unfulfilledOptions];
 }
 
 async function getForwardingSellerOptions() {
