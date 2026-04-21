@@ -598,13 +598,28 @@ async function getPackShipOutboundOptions() {
       )
     )
   ];
-
+  
   const inventoryUnitsById = new Map();
-  for (const id of unfulfilledInventoryIds) {
-    const record = await airtable(AIRTABLE_INVENTORY_UNITS_TABLE).find(id);
-    inventoryUnitsById.set(id, record);
-  }
 
+  if (!unfulfilledInventoryIds.length) {
+    return [...salesOptions, ...forwardingOptions];
+  }
+  
+  for (let i = 0; i < unfulfilledInventoryIds.length; i += 50) {
+    const batch = unfulfilledInventoryIds.slice(i, i + 50);
+  
+    const inventoryRecords = await airtable(AIRTABLE_INVENTORY_UNITS_TABLE)
+      .select({
+        filterByFormula: `OR(${batch
+          .map((id) => `RECORD_ID() = '${id}'`)
+          .join(",")})`
+      })
+      .all();
+  
+    for (const record of inventoryRecords) {
+      inventoryUnitsById.set(record.id, record);
+    }
+  }
   const groupedOrders = new Map();
 
   for (const record of unfulfilledRecords) {
