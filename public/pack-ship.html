@@ -608,9 +608,7 @@
         return;
       }
 
-      const trackingNumber = currentOutbound.source_table === "unfulfilled_orders_log"
-        ? "ORDER"
-        : trackingSelect.value;
+      const trackingNumber = trackingSelect.value;
 
       if (!trackingNumber) {
         showToast("Select a tracking number first.", "warning", "Warning");
@@ -640,9 +638,7 @@
         return;
       }
     
-      const trackingNumber = currentOutbound.source_table === "unfulfilled_orders_log"
-        ? "ORDER"
-        : trackingSelect.value;
+      const trackingNumber = trackingSelect.value;
     
       if (!trackingNumber) {
         showToast("Select a tracking number first.", "warning", "Warning");
