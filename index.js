@@ -1000,7 +1000,7 @@ async function getPackShipOutboundDetails(outboundId, sourceTable) {
     const filteredItems = [];
 
     for (const itemRecord of inventoryUnitRecords) {
-      if (isWarehouseItemFast(itemRecord)) {
+      if (await isWarehouseItem(itemRecord)) {
         filteredItems.push(itemRecord);
       }
     }
