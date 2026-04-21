@@ -620,7 +620,67 @@ async function getPackShipOutboundOptions() {
       inventoryUnitsById.set(record.id, record);
     }
   }
+
+  // 🔥 STEP 1: Collect all seller record IDs
+  const allSellerRecordIds = new Set();
+  
+  for (const record of inventoryUnitsById.values()) {
+    const sellerIds = Array.isArray(record.fields["Seller ID"])
+      ? record.fields["Seller ID"]
+      : [];
+  
+    sellerIds.forEach(id => allSellerRecordIds.add(id));
+  }
+  
+  // 🔥 STEP 2: Fetch all sellers in batch
+  const sellerCodeById = new Map();
+  
+  const sellerIdsArray = Array.from(allSellerRecordIds);
+  
+  for (let i = 0; i < sellerIdsArray.length; i += 50) {
+    const batch = sellerIdsArray.slice(i, i + 50);
+  
+    const sellerRecords = await airtable(AIRTABLE_SELLERS_TABLE)
+      .select({
+        filterByFormula: `OR(${batch.map(id => `RECORD_ID()='${id}'`).join(",")})`
+      })
+      .all();
+  
+    for (const record of sellerRecords) {
+      const code = asText(record.fields["Seller ID"]).trim().toUpperCase();
+      sellerCodeById.set(record.id, code);
+    }
+  }
+  
   const groupedOrders = new Map();
+
+  function isWarehouseItemFast(inventoryRecord) {
+    const itemId = asText(inventoryRecord.fields["Item ID"]).toUpperCase();
+  
+    // Always allowed
+    if (itemId.startsWith("PCS-") || itemId.startsWith("KC-") || itemId.startsWith("RSC-")) {
+      return true;
+    }
+  
+    // Conditional OUT-
+    if (itemId.startsWith("OUT-")) {
+      const allowedSellerCodes = ["SE-00537", "SE-00309"];
+  
+      const sellerRecordIds = Array.isArray(inventoryRecord.fields["Seller ID"])
+        ? inventoryRecord.fields["Seller ID"]
+        : [];
+  
+      for (const sellerRecordId of sellerRecordIds) {
+        const sellerCode = sellerCodeById.get(sellerRecordId);
+  
+        if (allowedSellerCodes.includes(sellerCode)) {
+          return true;
+        }
+      }
+    }
+  
+    return false;
+  }
 
   for (const record of unfulfilledRecords) {
     const shopifyOrderNumber = asText(record.fields["Shopify Order Number"]);
@@ -635,7 +695,7 @@ async function getPackShipOutboundOptions() {
       const inventoryRecord = inventoryUnitsById.get(id);
       if (!inventoryRecord) continue;
     
-      if (await isWarehouseItem(inventoryRecord)) {
+      if (isWarehouseItemFast(inventoryRecord)) {
         warehouseInventoryUnitIds.push(id);
       }
     }
