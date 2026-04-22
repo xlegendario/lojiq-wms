@@ -2575,6 +2575,60 @@ app.post("/api/request-label", async (req, res) => {
   }
 });
 
+app.post("/send-label-to-channel", async (req, res) => {
+  try {
+    const recordId = req.body?.recordId;
+
+    if (!recordId) {
+      return res.status(400).json({ error: "Missing recordId" });
+    }
+
+    const record = await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).find(recordId);
+    const fields = record.fields || {};
+
+    const claimedChannelId = asText(fields["Claimed Channel ID"]);
+    const wtbChannelId = asText(fields["WTB Created Channel ID"]);
+    const targetChannelId = claimedChannelId || wtbChannelId;
+
+    if (!targetChannelId) {
+      throw new Error("No channel ID found");
+    }
+
+    const labelField = fields["Shipping Label"];
+    const labelUrl = Array.isArray(labelField) && labelField.length > 0
+      ? labelField[0].url
+      : null;
+
+    const trackingNumber = asText(fields["Tracking Number"]);
+
+    if (!labelUrl) {
+      throw new Error("No label URL found");
+    }
+
+    // 👇 gebruik je bestaande functie
+    await sendFinalLabelToDiscordChannel({
+      channelId: targetChannelId,
+      orderId: asText(fields["Order ID"]) || record.id,
+      trackingNumber,
+      labelUrl
+    });
+
+    // 👇 voorkom dubbele sends
+    await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).update(recordId, {
+      "Label Sent To Discord?": true
+    });
+
+    return res.json({ ok: true });
+
+  } catch (error) {
+    console.error("send-label-to-channel failed:", error);
+    return res.status(500).json({
+      error: "Failed to send label",
+      details: error.message
+    });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`Lojiq WMS running on port ${PORT}`);
 });
