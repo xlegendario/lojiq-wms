@@ -31,6 +31,7 @@ const {
   BUYERS_AIRTABLE_TABLE = "Buyer Database",  // External Airtable
   BUYERS_AIRTABLE_TOKEN,
   AIRTABLE_OUTBOUND_SHIPPING_CODES_TABLE = "Outbound Shipping Codes",
+  AIRTABLE_LABEL_REQUEST_ROUTING_TABLE = "Label Request Routing",
   SENDCLOUD_PUBLIC_KEY,
   SENDCLOUD_SECRET_KEY,
   SENDCLOUD_PARCELS_URL = "https://panel.sendcloud.sc/api/v2/parcels",
@@ -768,6 +769,56 @@ async function getSellerCodeByRecordId(sellerRecordId) {
   return asText(record.fields["Seller ID"]);
 }
 
+async function getSellerCountryCodeFromOrderFields(orderFields) {
+  const linkedSellerIds = Array.isArray(orderFields["Linked Seller ID"])
+    ? orderFields["Linked Seller ID"].map((value) => asText(value)).filter(Boolean)
+    : [];
+
+  const claimedSellerIds = Array.isArray(orderFields["Claimed Seller ID"])
+    ? orderFields["Claimed Seller ID"].map((value) => asText(value)).filter(Boolean)
+    : [];
+
+  const sellerRecordId = linkedSellerIds[0] || claimedSellerIds[0] || "";
+
+  if (!sellerRecordId) {
+    return "";
+  }
+
+  const sellerRecord = await airtable(AIRTABLE_SELLERS_TABLE).find(sellerRecordId);
+  return asText(sellerRecord.fields["Country Code"]);
+}
+
+async function getPreferredCourierForCountryCode(countryCode) {
+  const safeCountryCode = escapeFormulaValue(countryCode);
+
+  if (!safeCountryCode) {
+    return {
+      preferredCourier: "",
+      instructionText: ""
+    };
+  }
+
+  const records = await airtable(AIRTABLE_LABEL_REQUEST_ROUTING_TABLE)
+    .select({
+      fields: ["Country Code", "Preferred Courier", "Instruction Text"],
+      filterByFormula: `TRIM({Country Code} & '') = '${safeCountryCode}'`,
+      maxRecords: 1
+    })
+    .firstPage();
+
+  if (!records.length) {
+    return {
+      preferredCourier: "",
+      instructionText: ""
+    };
+  }
+
+  return {
+    preferredCourier: asText(records[0].fields["Preferred Courier"]),
+    instructionText: asText(records[0].fields["Instruction Text"])
+  };
+}
+
 async function getInboundPartyOptions() {
   const sellerRecords = await airtable(AIRTABLE_SELLERS_TABLE)
     .select({
@@ -967,7 +1018,10 @@ async function postLabelRequestToDiscordBot({
   sku,
   size,
   storeName,
-  labelRequestUrl
+  labelRequestUrl,
+  sellerCountryCode,
+  preferredCourier,
+  courierInstruction
 }) {
   if (!DISCORD_BOT_BASE_URL) {
     throw new Error("Missing DISCORD_BOT_BASE_URL");
@@ -989,7 +1043,10 @@ async function postLabelRequestToDiscordBot({
       sku,
       size,
       store_name: storeName,
-      label_request_url: labelRequestUrl
+      label_request_url: labelRequestUrl,
+      seller_country_code: sellerCountryCode,
+      preferred_courier: preferredCourier,
+      courier_instruction: courierInstruction
     })
   });
 
@@ -1561,7 +1618,16 @@ app.post("/api/receive-parcel", async (req, res) => {
           "Fulfillment Status": "Requested Label",
           "Label Error Message": null
         });
-      
+
+        const sellerCountryCode = await getSellerCountryCodeFromOrderFields(orderFields);
+
+        const { preferredCourier, instructionText } =
+          await getPreferredCourierForCountryCode(sellerCountryCode);
+        
+        const courierInstruction =
+          instructionText ||
+          (preferredCourier ? `Please provide a ${preferredCourier} label.` : "");
+        
         await postLabelRequestToDiscordBot({
           channelId: labelRequestChannelId,
           recordId: orderRecord.id,
@@ -1571,7 +1637,10 @@ app.post("/api/receive-parcel", async (req, res) => {
           sku,
           size,
           storeName: asText(orderFields["Store Name"]) || asText(merchantFields["Store Name"]),
-          labelRequestUrl
+          labelRequestUrl,
+          sellerCountryCode,
+          preferredCourier,
+          courierInstruction
         });
       
         return res.status(200).json({
@@ -2533,6 +2602,15 @@ app.post("/api/request-label", async (req, res) => {
         "Label Error Message": null
       });
 
+      const sellerCountryCode = await getSellerCountryCodeFromOrderFields(orderFields);
+
+      const { preferredCourier, instructionText } =
+        await getPreferredCourierForCountryCode(sellerCountryCode);
+      
+      const courierInstruction =
+        instructionText ||
+        (preferredCourier ? `Please provide a ${preferredCourier} label.` : "");
+
       await postLabelRequestToDiscordBot({
         channelId: labelRequestChannelId,
         recordId: orderRecord.id,
@@ -2542,7 +2620,10 @@ app.post("/api/request-label", async (req, res) => {
         sku: asText(orderFields["SKU"]),
         size: asText(orderFields["Size"]),
         storeName: asText(orderFields["Store Name"]) || asText(merchantFields["Store Name"]),
-        labelRequestUrl
+        labelRequestUrl,
+        sellerCountryCode,
+        preferredCourier,
+        courierInstruction
       });
 
       return res.status(200).json({
