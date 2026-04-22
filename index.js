@@ -988,6 +988,7 @@ async function updateUnfulfilledOrderManualLabel({
         filename: safeFileName.endsWith(".pdf") ? safeFileName : `${safeFileName}.pdf`
       }
     ],
+    "Shipping Label URL (Permanent)": uploadedPdfUrl,
     "Fulfillment Status": "Ready to Ship",
     "Label Error Message": null
   });
@@ -1594,6 +1595,7 @@ app.post("/api/receive-parcel", async (req, res) => {
             filename: `${sanitizeFileName(orderId)}.pdf`
           }
         ],
+        "Shipping Label URL (Permanent)": uploadedPdfUrl,
         "Label Error Message": null
       });
 
@@ -2595,10 +2597,14 @@ app.post("/send-label-to-channel", async (req, res) => {
       throw new Error("No channel ID found");
     }
 
+    const permanentLabelUrl = asText(fields["Shipping Label URL (Permanent)"]);
     const labelField = fields["Shipping Label"];
-    const labelUrl = Array.isArray(labelField) && labelField.length > 0
-      ? labelField[0].url
-      : null;
+    
+    const labelUrl = permanentLabelUrl || (
+      Array.isArray(labelField) && labelField.length > 0
+        ? labelField[0].url
+        : null
+    );
 
     const trackingNumber = asText(fields["Tracking Number"]);
 
