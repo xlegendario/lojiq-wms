@@ -854,43 +854,44 @@ async function sendFinalLabelToDiscordChannel({
   trackingNumber,
   labelUrl
 }) {
-  if (!DISCORD_BOT_BASE_URL) {
-    throw new Error("Missing DISCORD_BOT_BASE_URL");
+  if (!process.env.DISCORD_TOKEN) {
+    throw new Error("Missing DISCORD_TOKEN");
   }
 
-  const url = `${DISCORD_BOT_BASE_URL.replace(/\/$/, "")}/send-label-to-channel`;
+  const url = `https://discord.com/api/v10/channels/${channelId}/messages`;
+
+  const body = {
+    embeds: [
+      {
+        title: "📦 Shipping Label Ready",
+        color: 0x00b894,
+        description:
+          `**Order:** ${orderId}\n` +
+          `**Tracking:** ${trackingNumber}\n\n` +
+          `[📄 Download Label](${labelUrl})`,
+        footer: {
+          text: "Kickz Caviar Logistics"
+        }
+      }
+    ]
+  };
 
   const response = await fetch(url, {
     method: "POST",
     headers: {
+      "Authorization": `Bot ${process.env.DISCORD_TOKEN}`,
       "Content-Type": "application/json"
     },
-    body: JSON.stringify({
-      channel_id: channelId,
-      order_id: orderId,
-      tracking_number: trackingNumber,
-      label_url: labelUrl
-    })
+    body: JSON.stringify(body)
   });
 
-  const rawText = await response.text().catch(() => "");
-  let data = {};
-
-  try {
-    data = rawText ? JSON.parse(rawText) : {};
-  } catch {
-    data = {};
-  }
+  const text = await response.text().catch(() => "");
 
   if (!response.ok) {
-    throw new Error(
-      data.details ||
-      data.error ||
-      `Discord bot returned ${response.status}: ${rawText || "No response body"}`
-    );
+    throw new Error(`Discord API error: ${response.status} ${text}`);
   }
 
-  return data;
+  return true;
 }
 
 async function postLabelRequestToDiscordBot({
