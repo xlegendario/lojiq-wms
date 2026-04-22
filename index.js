@@ -992,20 +992,6 @@ async function updateUnfulfilledOrderManualLabel({
     "Fulfillment Status": "Ready to Ship",
     "Label Error Message": null
   });
-  
-  const updatedRecord = await getUnfulfilledOrderRecordById(recordId);
-  const updatedFields = updatedRecord.fields || {};
-  const claimedChannelId = asText(updatedFields["Claimed Channel ID"]);
-  
-  if (claimedChannelId) {
-    await sendFinalLabelToDiscordChannel({
-      channelId: claimedChannelId,
-      orderId,
-      trackingNumber,
-      labelUrl: uploadedPdfUrl
-    });
-  }
-  
   return uploadedPdfUrl;
 }
 
