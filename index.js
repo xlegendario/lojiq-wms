@@ -870,7 +870,7 @@ async function sendFinalLabelToDiscordChannel({
           `**Tracking:** ${trackingNumber}\n\n` +
           `[📄 Download Label](${labelUrl})`,
         footer: {
-          text: "Kickz Caviar Logistics"
+          text: "Kickz Caviar"
         }
       }
     ]
@@ -891,7 +891,71 @@ async function sendFinalLabelToDiscordChannel({
     throw new Error(`Discord API error: ${response.status} ${text}`);
   }
 
+  await markChannelLabelOk(channelId);
+
   return true;
+}
+
+async function markChannelLabelOk(channelId) {
+  if (!process.env.DISCORD_TOKEN) {
+    throw new Error("Missing DISCORD_TOKEN");
+  }
+
+  const url = `https://discord.com/api/v10/channels/${channelId}`;
+
+  const getResponse = await fetch(url, {
+    method: "GET",
+    headers: {
+      "Authorization": `Bot ${process.env.DISCORD_TOKEN}`,
+      "Content-Type": "application/json"
+    }
+  });
+
+  const getText = await getResponse.text().catch(() => "");
+  let channelData = {};
+
+  try {
+    channelData = getText ? JSON.parse(getText) : {};
+  } catch {
+    channelData = {};
+  }
+
+  if (!getResponse.ok) {
+    throw new Error(`Failed to load channel: ${getResponse.status} ${getText}`);
+  }
+
+  const currentName = asText(channelData.name).toLowerCase();
+
+  if (!currentName) {
+    return;
+  }
+
+  if (currentName.endsWith("-labelok")) {
+    return;
+  }
+
+  let newName = `${currentName}-labelok`;
+
+  if (newName.length > 100) {
+    newName = newName.slice(0, 100);
+  }
+
+  const patchResponse = await fetch(url, {
+    method: "PATCH",
+    headers: {
+      "Authorization": `Bot ${process.env.DISCORD_TOKEN}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      name: newName
+    })
+  });
+
+  const patchText = await patchResponse.text().catch(() => "");
+
+  if (!patchResponse.ok) {
+    throw new Error(`Failed to rename channel: ${patchResponse.status} ${patchText}`);
+  }
 }
 
 async function postLabelRequestToDiscordBot({
