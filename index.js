@@ -1565,16 +1565,17 @@ app.post("/api/receive-parcel", async (req, res) => {
       .all();
 
     if (unfulfilledRecords.length > 0) {
-      const nonAwaitingLabelRecord = unfulfilledRecords.find((record) => {
+      const nonAllowedStatusRecord = unfulfilledRecords.find((record) => {
         const fulfillmentStatus = asText(record.fields["Fulfillment Status"]);
-        return fulfillmentStatus !== "Awaiting Label";
+        return !["Awaiting Label", "Allocated"].includes(fulfillmentStatus);
       });
 
-      if (nonAwaitingLabelRecord) {
-        const orderId = asText(nonAwaitingLabelRecord.fields["Order ID"]) || nonAwaitingLabelRecord.id;
-
+      if (nonAllowedStatusRecord) {
+        const orderId = asText(nonAllowedStatusRecord.fields["Order ID"]) || nonAllowedStatusRecord.id;
+        const fulfillmentStatus = asText(nonAllowedStatusRecord.fields["Fulfillment Status"]);
+      
         return res.status(400).json({
-          error: `The Order ${orderId} might be cancelled or already shipped, check Airtable`
+          error: `The Order ${orderId} has Fulfillment Status "${fulfillmentStatus}" and cannot request a label through this scan flow`
         });
       }
 
