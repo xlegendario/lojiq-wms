@@ -11,6 +11,8 @@
     "@aws-sdk/client-s3": "^3.600.0",
     "airtable": "^0.12.2",
     "dotenv": "^16.4.5",
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "qrcode": "^1.5.4",
+    "pdf-lib": "^1.17.1"
   }
 }
