@@ -25,6 +25,7 @@ const {
   AIRTABLE_MERCHANTS_TABLE = "Merchants",
   AIRTABLE_INVENTORY_UNITS_TABLE = "Inventory Units",
   AIRTABLE_EXTERNAL_SALES_LOG_TABLE = "External Sales Log",
+  AIRTABLE_RETURNS_TABLE = "Incoming Returns",
   AIRTABLE_FORWARDING_SERVICE_LOG_TABLE = "Forwarding Service Log",
   AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE = "Unfulfilled Orders Log",
   BUYERS_AIRTABLE_BASE_ID,
@@ -1086,6 +1087,23 @@ function pdfBufferFromDataUrl(dataUrl) {
   return Buffer.from(match[1], "base64");
 }
 
+async function findIncomingReturnByTrackingNumber(trackingNumber) {
+  const safeTrackingNumber = escapeFormulaValue(trackingNumber);
+
+  if (!safeTrackingNumber) {
+    return null;
+  }
+
+  const records = await airtable(AIRTABLE_RETURNS_TABLE)
+    .select({
+      filterByFormula: `TRIM({Tracking Number} & '') = '${safeTrackingNumber}'`,
+      maxRecords: 1
+    })
+    .firstPage();
+
+  return records[0] || null;
+}
+
 async function updateUnfulfilledOrderManualLabel({
   recordId,
   orderId,
@@ -1519,6 +1537,36 @@ app.post("/api/receive-parcel", async (req, res) => {
 
     const now = new Date().toISOString();
     const safeTracking = escapeFormulaValue(trackingNumber);
+
+    // 0. First check Incoming Returns
+    const incomingReturnRecord = await findIncomingReturnByTrackingNumber(trackingNumber);
+    
+    if (incomingReturnRecord) {
+      const currentStatus = asText(incomingReturnRecord.fields["Return Status"]);
+    
+      if (currentStatus === "Received") {
+        return res.status(200).json({
+          message: "Return already received",
+          exists: true,
+          flow_type: "return",
+          already_received: true,
+          return_record_id: incomingReturnRecord.id
+        });
+      }
+    
+      await airtable(AIRTABLE_RETURNS_TABLE).update(incomingReturnRecord.id, {
+        "Return Status": "Received",
+        "Received At": now
+      });
+    
+      return res.status(200).json({
+        message: "Return received",
+        exists: true,
+        flow_type: "return",
+        already_received: false,
+        return_record_id: incomingReturnRecord.id
+      });
+    }
 
     // 1. First check Incoming Stock (existing behavior)
     const incomingRecords = await airtable(AIRTABLE_INCOMING_STOCK_TABLE)
