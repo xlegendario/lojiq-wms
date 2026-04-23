@@ -4,6 +4,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import Airtable from "airtable";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import returnsRouter from "./src/routes/returns.js";
 
 dotenv.config();
 
@@ -2767,6 +2768,8 @@ app.post("/send-label-to-channel", async (req, res) => {
     });
   }
 });
+
+app.use("/api/returns", returnsRouter);
 
 app.listen(PORT, () => {
   console.log(`Lojiq WMS running on port ${PORT}`);
