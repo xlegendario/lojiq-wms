@@ -1100,7 +1100,9 @@
         return;
       }
     
-      const cleanedValue = value.replace(/^tracking/i, "").trim();
+      const cleanedValue = normalizeScannedInput(
+        value.replace(/^tracking/i, "").trim()
+      );
       trackingInput.value = "";
     
       try {
@@ -1304,8 +1306,7 @@
         }
     
         showToast("Return approved and marked as Verified.", "success", "QC Complete");
-        resetPage();
-        scanInput.focus();
+        resetParcel();
       } catch (error) {
         showToast(error.message, "error", "Error");
       }
@@ -1354,8 +1355,7 @@
         }
     
         showToast("Return issue submitted and marked as Troubled.", "success", "Issue Submitted");
-        resetPage();
-        scanInput.focus();
+        resetParcel();
       } catch (error) {
         showToast(error.message, "error", "Error");
       }
