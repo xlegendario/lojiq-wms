@@ -553,6 +553,26 @@
         </div>
       </div>
 
+      <div id="startPanel" class="card">
+        <h2>Ready to Scan</h2>
+      
+        <div class="status-box">
+          <div class="status-item">
+            <div class="status-label">Scan Product</div>
+            <div class="status-value">
+              Scan a Tracking Number to start Inbound Stock Verification.
+            </div>
+          </div>
+      
+          <div class="status-item">
+            <div class="status-label">Scan Return</div>
+            <div class="status-value">
+              Scan a RET-code to start Return QC Check.
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div id="summaryPanel" class="card" style="display:none;">
         <h2>SUMMARY</h2>
 
@@ -704,6 +724,7 @@
     const uniqueCount = document.getElementById("uniqueCount");
     const totalCount = document.getElementById("totalCount");
     const itemsTableBody = document.getElementById("itemsTableBody");
+    const startPanel = document.getElementById("startPanel");
     const summaryPanel = document.getElementById("summaryPanel");
     const qcPanel = document.getElementById("qcPanel");
     
@@ -787,12 +808,14 @@
 
     function showStartState() {
       currentMode = "";
+      startPanel.style.display = "block";
       summaryPanel.style.display = "none";
       qcPanel.style.display = "none";
     }
     
     function showInboundMode() {
       currentMode = "inbound";
+      startPanel.style.display = "none";
       qcPanel.style.display = "none";
       summaryPanel.style.display = "block";
     }
@@ -801,6 +824,7 @@
       currentMode = "return";
       currentReturnId = data.return_id || "";
     
+      startPanel.style.display = "none";
       summaryPanel.style.display = "none";
       qcPanel.style.display = "block";
     
