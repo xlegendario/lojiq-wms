@@ -553,7 +553,7 @@
         </div>
       </div>
 
-      <div class="card">
+      <div id="summaryPanel" class="card" style="display:none;">
         <h2>SUMMARY</h2>
 
         <div class="summary-meta-row">
@@ -601,6 +601,78 @@
           <button class="button" id="submitBtn">Submit</button>
         </div>
       </div>
+
+      <div id="qcPanel" class="card" style="display:none;">
+        <h2>QC CHECK</h2>
+
+        <div class="status-box">
+          <div class="status-item">
+            <div class="status-label">Return ID:</div>
+            <div class="status-value" id="qcReturnId">—</div>
+          </div>
+
+          <div class="status-item">
+            <div class="status-label">Store Name:</div>
+            <div class="status-value" id="qcStoreName">—</div>
+          </div>
+
+          <div class="status-item">
+            <div class="status-label">Shopify Order Number:</div>
+            <div class="status-value" id="qcShopifyOrderNumber">—</div>
+          </div>
+
+          <div class="status-item">
+            <div class="status-label">Product:</div>
+            <div class="status-value" id="qcProductName">—</div>
+          </div>
+
+          <div class="status-item">
+            <div class="status-label">SKU:</div>
+            <div class="status-value" id="qcSku">—</div>
+          </div>
+
+          <div class="status-item">
+            <div class="status-label">Size:</div>
+            <div class="status-value" id="qcSize">—</div>
+          </div>
+        </div>
+
+        <div class="manual-block">
+          <div class="manual-add-title">QC Result</div>
+
+          <select id="qcCondition" class="input">
+            <option value="" selected disabled>Select condition</option>
+            <option value="Approved">Approved</option>
+            <option value="Worn">Worn</option>
+            <option value="Damaged">Damaged</option>
+            <option value="Wrong Size">Wrong Size</option>
+            <option value="Wrong SKU">Wrong SKU</option>
+            <option value="Wrong SKU & Size">Wrong SKU & Size</option>
+            <option value="Incomplete">Incomplete</option>
+            <option value="Fake">Fake</option>
+          </select>
+
+          <div id="receivedSizeWrap" style="display:none; margin-top:12px;">
+            <div class="field-label">Received Size</div>
+            <input id="qcReceivedSize" class="input" />
+          </div>
+
+          <div id="receivedSkuWrap" style="display:none; margin-top:12px;">
+            <div class="field-label">Received SKU</div>
+            <input id="qcReceivedSku" class="input" />
+          </div>
+
+          <div style="margin-top:12px;">
+            <div class="field-label">QC Notes</div>
+            <input id="qcNotes" class="input" placeholder="Optional notes" />
+          </div>
+
+          <div class="actions">
+            <button class="button" id="qcApproveBtn" type="button">Approve Return</button>
+            <button class="button secondary" id="qcIssueBtn" type="button">Submit Issue</button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -632,6 +704,23 @@
     const uniqueCount = document.getElementById("uniqueCount");
     const totalCount = document.getElementById("totalCount");
     const itemsTableBody = document.getElementById("itemsTableBody");
+    const summaryPanel = document.getElementById("summaryPanel");
+    const qcPanel = document.getElementById("qcPanel");
+    
+    const qcReturnId = document.getElementById("qcReturnId");
+    const qcStoreName = document.getElementById("qcStoreName");
+    const qcShopifyOrderNumber = document.getElementById("qcShopifyOrderNumber");
+    const qcProductName = document.getElementById("qcProductName");
+    const qcSku = document.getElementById("qcSku");
+    const qcSize = document.getElementById("qcSize");
+    const qcCondition = document.getElementById("qcCondition");
+    const qcNotes = document.getElementById("qcNotes");
+    const qcReceivedSize = document.getElementById("qcReceivedSize");
+    const qcReceivedSku = document.getElementById("qcReceivedSku");
+    const receivedSizeWrap = document.getElementById("receivedSizeWrap");
+    const receivedSkuWrap = document.getElementById("receivedSkuWrap");
+    const qcApproveBtn = document.getElementById("qcApproveBtn");
+    const qcIssueBtn = document.getElementById("qcIssueBtn");
 
     let parcelStarted = false;
     let trackingNumber = "";
@@ -639,6 +728,9 @@
     let selectedPartyId = "";
     let selectedPartySource = "";
     let items = [];
+    
+    let currentMode = "";
+    let currentReturnId = "";
 
     function escapeHtml(value) {
       return String(value ?? "")
@@ -691,6 +783,71 @@
 
     function focusScanner() {
       scanInput.focus();
+    }
+
+    function showStartState() {
+      currentMode = "";
+      summaryPanel.style.display = "none";
+      qcPanel.style.display = "none";
+    }
+    
+    function showInboundMode() {
+      currentMode = "inbound";
+      qcPanel.style.display = "none";
+      summaryPanel.style.display = "block";
+    }
+    
+    function showReturnMode(data) {
+      currentMode = "return";
+      currentReturnId = data.return_id || "";
+    
+      summaryPanel.style.display = "none";
+      qcPanel.style.display = "block";
+    
+      qcReturnId.textContent = data.return_id || "—";
+      qcStoreName.textContent = data.store_name || "—";
+      qcShopifyOrderNumber.textContent = data.shopify_order_number || "—";
+      qcProductName.textContent = data.product_name || "—";
+      qcSku.textContent = data.sku || "—";
+      qcSize.textContent = data.size || "—";
+    
+      qcCondition.value = "";
+      qcNotes.value = data.qc_notes || "";
+      qcReceivedSize.value = data.received_size || "";
+      qcReceivedSku.value = data.received_sku || "";
+    
+      receivedSizeWrap.style.display = "none";
+      receivedSkuWrap.style.display = "none";
+    
+      statusText.textContent = "Return loaded — ready for QC";
+      trackingDisplay.textContent = data.return_id || "—";
+      uniqueCount.textContent = "—";
+      totalCount.textContent = "—";
+    
+      showToast(`Return ${data.return_id} loaded for QC.`, "success", "Return Found");
+    }
+    
+    async function tryOpenReturnQC(input) {
+      const response = await fetch("/api/returns/lookup-return", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ input })
+      });
+    
+      if (response.status === 404) {
+        return false;
+      }
+    
+      const data = await response.json().catch(() => ({}));
+    
+      if (!response.ok) {
+        throw new Error(data.details || data.error || "Return lookup failed");
+      }
+    
+      showReturnMode(data);
+      return true;
     }
 
     function updateStatusPanel() {
@@ -833,6 +990,8 @@
         return;
       }
 
+      showInboundMode();
+
       const sku = manualSkuInput.value.trim();
       const size = manualSizeInput.value.trim();
 
@@ -889,26 +1048,39 @@
       }
     }
 
-    function startParcelFromTracking() {
+    async function startParcelFromTracking() {
       const value = trackingInput.value.trim();
     
       if (!value) {
         return;
       }
     
-      // Remove unwanted prefixes such as "Tracking"
       const cleanedValue = value.replace(/^tracking/i, "").trim();
-    
-      trackingNumber = cleanedValue;
-      parcelStarted = true;
-    
-      // Clear the input to provide visual feedback
       trackingInput.value = "";
     
-      updateStatusPanel();
-      focusScanner();
+      try {
+        const isReturn = await tryOpenReturnQC(cleanedValue);
     
-      showToast(`Parcel ${trackingNumber} ready for verification.`, "success", "Success");
+        if (isReturn) {
+          parcelStarted = false;
+          trackingNumber = "";
+          items = [];
+          renderTable();
+          return;
+        }
+    
+        trackingNumber = cleanedValue;
+        parcelStarted = true;
+        showInboundMode();
+    
+        updateStatusPanel();
+        focusScanner();
+    
+        showToast(`Parcel ${trackingNumber} ready for verification.`, "success", "Success");
+      } catch (error) {
+        showToast(error.message, "error", "Error");
+        trackingInput.focus();
+      }
     }
 
     function resetParcel() {
@@ -924,6 +1096,16 @@
       scanInput.value = "";
       manualSkuInput.value = "";
       manualSizeInput.value = "";
+      currentMode = "";
+      currentReturnId = "";
+      qcCondition.value = "";
+      qcNotes.value = "";
+      qcReceivedSize.value = "";
+      qcReceivedSku.value = "";
+      receivedSizeWrap.style.display = "none";
+      receivedSkuWrap.style.display = "none";
+      
+      showStartState();
       renderTable();
       trackingInput.focus();
     }
@@ -1043,6 +1225,95 @@
     submitBtn.addEventListener("click", submitParcel);
     manualAddBtn.addEventListener("click", handleManualAdd);
 
+    qcCondition.addEventListener("change", () => {
+      const value = qcCondition.value;
+    
+      receivedSizeWrap.style.display =
+        value === "Wrong Size" || value === "Wrong SKU & Size" ? "block" : "none";
+    
+      receivedSkuWrap.style.display =
+        value === "Wrong SKU" || value === "Wrong SKU & Size" ? "block" : "none";
+    });
+
+    qcApproveBtn.addEventListener("click", async () => {
+      if (!currentReturnId) {
+        showToast("No return loaded.", "warning", "Warning");
+        return;
+      }
+    
+      try {
+        const response = await fetch("/api/returns/confirm-return-qc", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            return_id: currentReturnId
+          })
+        });
+    
+        const data = await response.json().catch(() => ({}));
+    
+        if (!response.ok) {
+          throw new Error(data.details || data.error || "Failed to approve return");
+        }
+    
+        showToast("Return approved and marked as Verified.", "success", "QC Complete");
+        resetParcel();
+      } catch (error) {
+        showToast(error.message, "error", "Error");
+      }
+    });
+    
+    qcIssueBtn.addEventListener("click", async () => {
+      if (!currentReturnId) {
+        showToast("No return loaded.", "warning", "Warning");
+        return;
+      }
+    
+      const condition = qcCondition.value;
+      const qc_notes = qcNotes.value.trim();
+      const received_size = qcReceivedSize.value.trim();
+      const received_sku = qcReceivedSku.value.trim();
+    
+      if (!condition) {
+        showToast("Please select a condition.", "warning", "Warning");
+        return;
+      }
+    
+      if (condition === "Approved") {
+        showToast("Use Approve Return for approved returns.", "warning", "Warning");
+        return;
+      }
+    
+      try {
+        const response = await fetch("/api/returns/submit-return-issue", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            return_id: currentReturnId,
+            condition,
+            qc_notes,
+            received_size,
+            received_sku
+          })
+        });
+    
+        const data = await response.json().catch(() => ({}));
+    
+        if (!response.ok) {
+          throw new Error(data.details || data.error || "Failed to submit return issue");
+        }
+    
+        showToast("Return issue submitted and marked as Troubled.", "success", "Issue Submitted");
+        resetParcel();
+      } catch (error) {
+        showToast(error.message, "error", "Error");
+      }
+    });
+
     manualSkuInput.addEventListener("keydown", (event) => {
       if (event.key !== "Enter") return;
       event.preventDefault();
@@ -1055,10 +1326,10 @@
       handleManualAdd();
     });
 
-    trackingInput.addEventListener("keydown", (event) => {
+    trackingInput.addEventListener("keydown", async (event) => {
       if (event.key === "Enter") {
         event.preventDefault();
-        startParcelFromTracking();
+        await startParcelFromTracking();
       }
     });
 
@@ -1133,6 +1404,10 @@
         target === manualSizeInput ||
         target === typeSelect ||
         target === partySelect ||
+        target === qcCondition ||
+        target === qcNotes ||
+        target === qcReceivedSize ||
+        target === qcReceivedSku ||
         (target instanceof HTMLInputElement && target.dataset.field) ||
         target.closest?.("[data-delete-index]") ||
         target.closest?.(".toast") ||
@@ -1145,8 +1420,9 @@
     });
 
     renderTable();
-      loadInboundParties();
-      trackingInput.focus();
+    showStartState();
+    loadInboundParties();
+    trackingInput.focus();
   </script>
 </body>
 </html>
