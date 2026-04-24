@@ -349,6 +349,23 @@
       setTimeout(removeToast, 5000);
     }
 
+    function normalizeScannedInput(value) {
+      const raw = String(value || "").trim();
+    
+      if (raw.startsWith("%")) {
+        const digits = raw.replace(/\D/g, "");
+    
+        if (digits.length >= 20) {
+          const last20 = digits.slice(-20);
+          return last20.slice(0, 14);
+        }
+    
+        return raw.slice(1);
+      }
+    
+      return raw;
+    }
+
     function escapeHtml(value) {
       return String(value ?? "")
         .replace(/&/g, "&amp;")
@@ -391,11 +408,13 @@
 
       e.preventDefault();
 
-      const value = scanInput.value.trim();
+      const rawValue = scanInput.value.trim();
       scanInput.value = "";
-
-      if (!value) return;
-
+      
+      if (!rawValue) return;
+      
+      const value = normalizeScannedInput(rawValue);
+      
       await processScan(value);
     });
 
