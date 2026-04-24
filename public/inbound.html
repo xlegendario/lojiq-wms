@@ -753,6 +753,27 @@
     let currentMode = "";
     let currentReturnId = "";
 
+    function normalizeScannedInput(value) {
+      const raw = String(value || "").trim();
+    
+      // DPD barcode:
+      // Example: %01271AG01155053354711328528
+      // digits last 20 = 01155053354711328528
+      // tracking = first 14 = 01155053354711
+      if (raw.startsWith("%")) {
+        const digits = raw.replace(/\D/g, "");
+    
+        if (digits.length >= 20) {
+          const last20 = digits.slice(-20);
+          return last20.slice(0, 14);
+        }
+    
+        return raw.slice(1);
+      }
+    
+      return raw;
+    }
+
     function escapeHtml(value) {
       return String(value ?? "")
         .replace(/&/g, "&amp;")
@@ -1283,7 +1304,8 @@
         }
     
         showToast("Return approved and marked as Verified.", "success", "QC Complete");
-        resetParcel();
+        resetPage();
+        scanInput.focus();
       } catch (error) {
         showToast(error.message, "error", "Error");
       }
@@ -1332,7 +1354,8 @@
         }
     
         showToast("Return issue submitted and marked as Troubled.", "success", "Issue Submitted");
-        resetParcel();
+        resetPage();
+        scanInput.focus();
       } catch (error) {
         showToast(error.message, "error", "Error");
       }
@@ -1367,11 +1390,13 @@
         return;
       }
 
-      const scannedValue = scanInput.value.trim();
+      const rawScannedValue = scanInput.value.trim();
       scanInput.value = "";
-
-      if (!scannedValue) return;
-
+      
+      if (!rawScannedValue) return;
+      
+      const scannedValue = normalizeScannedInput(rawScannedValue);
+      
       await handleScannedBarcode(scannedValue);
     });
 
