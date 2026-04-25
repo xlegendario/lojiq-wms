@@ -2600,7 +2600,7 @@ app.post("/api/request-label", async (req, res) => {
       return res.status(400).json({ error: "Missing record_id" });
     }
 
-    if (source !== "quick_deal") {
+    if (!["quick_deal", "wtb_deal"].includes(source)) {
       return res.status(400).json({ error: "Unsupported source" });
     }
 
