@@ -2624,9 +2624,17 @@ app.post("/api/request-label", async (req, res) => {
       throw new Error(`The Order ${orderId} has no linked Client`);
     }
 
-    const claimedChannelId = asText(orderFields["Claimed Channel ID"]);
-    if (!claimedChannelId) {
-      throw new Error(`Missing Claimed Channel ID for order ${orderId}`);
+    const dealChannelId =
+      source === "wtb_deal"
+        ? asText(orderFields["WTB Created Channel ID"])
+        : asText(orderFields["Claimed Channel ID"]);
+    
+    if (!dealChannelId) {
+      throw new Error(
+        source === "wtb_deal"
+          ? `Missing WTB Created Channel ID for order ${orderId}`
+          : `Missing Claimed Channel ID for order ${orderId}`
+      );
     }
 
     const merchantRecord = await airtable(AIRTABLE_MERCHANTS_TABLE).find(clientId);
@@ -2740,7 +2748,7 @@ app.post("/api/request-label", async (req, res) => {
     });
 
     await sendFinalLabelToDiscordChannel({
-      channelId: claimedChannelId,
+      channelId: dealChannelId,
       orderId,
       trackingNumber: sendcloud.trackingNumber,
       labelUrl: uploadedPdfUrl
