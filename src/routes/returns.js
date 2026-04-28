@@ -196,18 +196,71 @@ async function getShopifyOrder({ shopDomain, accessToken, orderId }) {
   return data.order;
 }
 
-function extractCustomerAddress(shopifyOrder) {
+function splitStreetAndHouseNumber(addressLine1, addressLine2 = "") {
+  const line1 = asText(addressLine1);
+  const line2 = asText(addressLine2);
 
+  if (!line1) {
+    return {
+      street: "",
+      houseNumber: ""
+    };
+  }
+
+  // If address2 is only a house number, use that first
+  if (/^\d+[a-zA-Z0-9\-\/]*$/.test(line2)) {
+    return {
+      street: line1,
+      houseNumber: line2
+    };
+  }
+
+  // Normal format: "Havenstraat 74D"
+  let match = line1.match(/^(.*\S)\s+(\d+[a-zA-Z0-9\-\/]*)$/);
+  if (match) {
+    return {
+      street: asText(match[1]),
+      houseNumber: asText(match[2])
+    };
+  }
+
+  // Reverse format: "74D Havenstraat"
+  match = line1.match(/^(\d+[a-zA-Z0-9\-\/]*)\s+(.*\S)$/);
+  if (match) {
+    return {
+      street: asText(match[2]),
+      houseNumber: asText(match[1])
+    };
+  }
+
+  return {
+    street: line1,
+    houseNumber: ""
+  };
+}
+
+function extractCustomerAddress(shopifyOrder) {
   const addr = shopifyOrder.shipping_address;
 
   if (!addr) {
     throw new Error("Shopify order missing shipping address");
   }
 
+  const { street, houseNumber } = splitStreetAndHouseNumber(
+    addr.address1 || "",
+    addr.address2 || ""
+  );
+
+  if (!houseNumber) {
+    throw new Error(`Customer address is missing house number: ${addr.address1 || ""} ${addr.address2 || ""}`.trim());
+  }
+
   return {
     name: `${addr.first_name || ""} ${addr.last_name || ""}`.trim(),
     company: addr.company || "",
-    address1: addr.address1,
+    address1: street,
+    houseNumber,
+    address2: addr.address2 || "",
     city: addr.city,
     postalCode: addr.zip,
     country: addr.country_code,
@@ -1072,6 +1125,7 @@ function mapOrderToSendcloudPayload({
     name,
     company,
     address1,
+    houseNumber,
     city,
     postalCode,
     country,
@@ -1084,6 +1138,7 @@ function mapOrderToSendcloudPayload({
       name,
       company_name: company || undefined,
       address_line_1: address1,
+      house_number: houseNumber,
       postal_code: postalCode,
       city,
       country_code: country,
