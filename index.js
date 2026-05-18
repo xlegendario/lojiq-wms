@@ -491,7 +491,7 @@ function isWarehouseItemFast(inventoryRecord, sellerCodeById) {
   }
 
   if (itemId.startsWith("OUT-")) {
-    const allowedSellerCodes = ["SE-00537", "SE-00309", "SE-00781"];
+    const allowedSellerCodes = ["SE-00537", "SE-00309", "SE-00781", "SE-00455"];
 
     const sellerRecordIds = Array.isArray(inventoryRecord.fields["Seller ID"])
       ? inventoryRecord.fields["Seller ID"]
