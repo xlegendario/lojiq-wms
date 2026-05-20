@@ -771,6 +771,10 @@ async function getSellerCodeByRecordId(sellerRecordId) {
   return asText(record.fields["Seller ID"]);
 }
 
+function looksLikeAirtableRecordId(value) {
+  return /^rec[a-zA-Z0-9]{14}$/.test(asText(value));
+}
+
 async function findSellerRecordBySellerId(sellerIdValue) {
   const safeSellerId = escapeFormulaValue(sellerIdValue);
 
@@ -785,13 +789,31 @@ async function findSellerRecordBySellerId(sellerIdValue) {
   return records[0] || null;
 }
 
+async function getSellerRecordFromLinkedSellerValue(value) {
+  const sellerValue = asText(value);
+
+  if (!sellerValue) {
+    return null;
+  }
+
+  // Case 1 → already Airtable record ID
+  if (looksLikeAirtableRecordId(sellerValue)) {
+    return await airtable(AIRTABLE_SELLERS_TABLE).find(sellerValue);
+  }
+
+  // Case 2 → Seller ID like SE-00001
+  return await findSellerRecordBySellerId(sellerValue);
+}
+
 async function getSellerCountryCodeFromOrderFields(orderFields) {
-  const linkedSellerCodes = Array.isArray(orderFields["Linked Seller ID"])
+  const linkedSellerValues = Array.isArray(orderFields["Linked Seller ID"])
     ? orderFields["Linked Seller ID"].map((value) => asText(value)).filter(Boolean)
     : [];
 
-  if (linkedSellerCodes.length) {
-    const sellerRecord = await findSellerRecordBySellerId(linkedSellerCodes[0]);
+  if (linkedSellerValues.length) {
+    const sellerRecord = await getSellerRecordFromLinkedSellerValue(
+      linkedSellerValues[0]
+    );
 
     if (sellerRecord) {
       return asText(sellerRecord.fields["Country Code"]);
@@ -806,7 +828,10 @@ async function getSellerCountryCodeFromOrderFields(orderFields) {
     return "";
   }
 
-  const sellerRecord = await airtable(AIRTABLE_SELLERS_TABLE).find(claimedSellerRecordIds[0]);
+  const sellerRecord = await airtable(AIRTABLE_SELLERS_TABLE).find(
+    claimedSellerRecordIds[0]
+  );
+
   return asText(sellerRecord.fields["Country Code"]);
 }
 
