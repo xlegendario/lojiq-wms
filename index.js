@@ -1649,7 +1649,9 @@ app.post("/api/receive-parcel", async (req, res) => {
           "SKU",
           "Size",
           "Shipping Label",
-          "Tracking Number"
+          "Tracking Number",
+          "Linked Seller ID",
+          "Claimed Seller ID"
         ],
         filterByFormula: `OR(
           TRIM({StockX Tracking Number} & '') = '${safeTracking}',
