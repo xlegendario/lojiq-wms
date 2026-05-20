@@ -120,6 +120,116 @@
       box-shadow: 0 0 0 4px rgba(47,128,237,0.16);
     }
 
+    select,
+    button {
+      font-family: Arial, Helvetica, sans-serif;
+    }
+    
+    .manual-card {
+      max-width: 640px;
+      margin: 28px auto 0;
+      padding: 18px;
+      border-radius: 16px;
+      border: 1px dashed rgba(102,179,255,0.35);
+      background: rgba(47,128,237,0.06);
+      text-align: left;
+    }
+    
+    .manual-title {
+      font-size: 18px;
+      font-weight: 800;
+      margin-bottom: 12px;
+      color: var(--text);
+    }
+    
+    .manual-field-label {
+      font-size: 13px;
+      font-weight: 800;
+      color: var(--muted);
+      margin: 12px 0 8px;
+    }
+    
+    .manual-select,
+    .manual-input {
+      width: 100%;
+      padding: 14px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,0.92);
+      color: #1f2937;
+      font-size: 15px;
+      outline: none;
+    }
+    
+    .manual-row {
+      display: grid;
+      grid-template-columns: 1fr 0.7fr auto;
+      gap: 10px;
+      align-items: end;
+    }
+    
+    .manual-button {
+      cursor: pointer;
+      border-radius: 12px;
+      border: none;
+      padding: 14px 16px;
+      font-size: 15px;
+      font-weight: 700;
+      background: linear-gradient(135deg, var(--primary), var(--primary-soft));
+      color: white;
+      white-space: nowrap;
+    }
+    
+    .manual-button.secondary {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text);
+    }
+    
+    .manual-summary {
+      margin-top: 14px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      background: rgba(7,17,31,0.35);
+    }
+    
+    .manual-summary-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      padding: 10px 12px;
+      border-bottom: 1px solid rgba(22,50,82,0.85);
+      color: var(--text);
+      font-size: 14px;
+    }
+    
+    .manual-summary-row:last-child {
+      border-bottom: none;
+    }
+    
+    .manual-remove {
+      border: none;
+      background: rgba(240, 68, 56, 0.12);
+      color: #ff9b95;
+      border-radius: 8px;
+      cursor: pointer;
+      padding: 6px 10px;
+    }
+    
+    .manual-actions {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+      margin-top: 14px;
+    }
+    
+    @media (max-width: 700px) {
+      .manual-row {
+        grid-template-columns: 1fr;
+      }
+    }
+
     .help {
       margin-top: 18px;
       color: var(--muted);
@@ -301,7 +411,31 @@
     </div>
 
     <div class="help">
-      Scan a parcel label. Each scan will be marked as received immediately.
+      Scan a parcel label. If no order is found, use Manual Stock Input below.
+    </div>
+    
+    <div class="manual-card" id="manualStockCard">
+      <div class="manual-title">Manual Stock Input</div>
+    
+      <div class="manual-field-label">Seller</div>
+      <select id="manualSellerSelect" class="manual-select">
+        <option value="" selected disabled>Select Seller</option>
+      </select>
+    
+      <div class="manual-field-label">Item</div>
+      <div class="manual-row">
+        <input id="manualSkuInput" class="manual-input" type="text" placeholder="SKU" autocomplete="off" />
+        <input id="manualSizeInput" class="manual-input" type="text" placeholder="Size" autocomplete="off" />
+        <button id="manualAddBtn" class="manual-button secondary" type="button">+ Add More</button>
+      </div>
+    
+      <div id="manualSummary" class="manual-summary" style="display:none;"></div>
+    
+      <div class="manual-actions">
+        <button id="manualSubmitBtn" class="manual-button" type="button">
+          Submit Manual Stock Input
+        </button>
+      </div>
     </div>
   </div>
 
@@ -310,6 +444,16 @@
   <script>
     const scanInput = document.getElementById("scanInput");
     const toastStack = document.getElementById("toastStack");
+    
+    const manualSellerSelect = document.getElementById("manualSellerSelect");
+    const manualSkuInput = document.getElementById("manualSkuInput");
+    const manualSizeInput = document.getElementById("manualSizeInput");
+    const manualAddBtn = document.getElementById("manualAddBtn");
+    const manualSubmitBtn = document.getElementById("manualSubmitBtn");
+    const manualSummary = document.getElementById("manualSummary");
+    
+    let manualItems = [];
+    let currentManualTrackingNumber = "";
 
     function showToast(message, type = "success", title = "") {
       const toast = document.createElement("div");
@@ -375,6 +519,140 @@
         .replace(/'/g, "&#039;");
     }
 
+    async function loadManualSellers() {
+      try {
+        const res = await fetch("/api/manual-stock-sellers");
+        const data = await res.json();
+    
+        if (!res.ok) {
+          throw new Error(data.details || data.error || "Failed to load sellers");
+        }
+    
+        manualSellerSelect.innerHTML = `<option value="" selected disabled>Select Seller</option>`;
+    
+        for (const seller of data.sellers || []) {
+          const option = document.createElement("option");
+          option.value = `${seller.seller_id}||${seller.seller_record_id}`;
+          option.textContent = seller.label;
+          manualSellerSelect.appendChild(option);
+        }
+      } catch (error) {
+        showToast(error.message || "Failed to load manual sellers.", "error", "Error");
+      }
+    }
+    
+    function renderManualSummary() {
+      if (!manualItems.length) {
+        manualSummary.style.display = "none";
+        manualSummary.innerHTML = "";
+        return;
+      }
+    
+      manualSummary.style.display = "block";
+      manualSummary.innerHTML = manualItems
+        .map((item, index) => `
+          <div class="manual-summary-row">
+            <div>${escapeHtml(item.sku)} / ${escapeHtml(item.size)}</div>
+            <button class="manual-remove" type="button" data-remove-manual-index="${index}">Remove</button>
+          </div>
+        `)
+        .join("");
+    }
+    
+    function addManualItemFromInputs() {
+      const sku = manualSkuInput.value.trim();
+      const size = manualSizeInput.value.trim();
+    
+      if (!sku || !size) {
+        showToast("Fill SKU and Size first.", "error", "Error");
+        return false;
+      }
+    
+      manualItems.push({ sku, size });
+    
+      manualSkuInput.value = "";
+      manualSizeInput.value = "";
+    
+      renderManualSummary();
+      manualSkuInput.focus();
+    
+      return true;
+    }
+    
+    async function submitManualStockInput() {
+      const selectedSeller = manualSellerSelect.value;
+    
+      if (!selectedSeller) {
+        showToast("Select a seller first.", "error", "Error");
+        manualSellerSelect.focus();
+        return;
+      }
+    
+      if (manualSkuInput.value.trim() || manualSizeInput.value.trim()) {
+        const added = addManualItemFromInputs();
+        if (!added) return;
+      }
+    
+      if (!manualItems.length) {
+        showToast("Add at least one SKU + Size.", "error", "Error");
+        manualSkuInput.focus();
+        return;
+      }
+    
+      const [sellerId, sellerRecordId] = selectedSeller.split("||");
+    
+      manualSubmitBtn.disabled = true;
+      manualSubmitBtn.textContent = "Submitting...";
+    
+      try {
+        const res = await fetch("/api/manual-stock-label-request", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            seller_id: sellerId,
+            seller_record_id: sellerRecordId,
+            tracking_number: currentManualTrackingNumber,
+            items: manualItems
+          })
+        });
+    
+        const data = await res.json();
+    
+        if (!res.ok) {
+          throw new Error(data.details || data.error || "Manual stock submit failed");
+        }
+    
+        if (data.matched_count > 0) {
+          showToast(
+            `${data.matched_count} label request(s) created. ${data.not_found_count || 0} not found.`,
+            "success",
+            "Success"
+          );
+        } else if (data.incoming_stock_created) {
+          showToast(
+            "No matching orders found. Incoming Stock record created for scanned tracking.",
+            "success",
+            "Incoming Stock Created"
+          );
+        } else {
+          showToast("No Results found.", "error", "No Results");
+        }
+    
+        manualItems = [];
+        currentManualTrackingNumber = "";
+        renderManualSummary();
+        manualSkuInput.value = "";
+        manualSizeInput.value = "";
+        scanInput.value = "";
+        scanInput.focus();
+      } catch (error) {
+        showToast(error.message || "Manual stock submit failed.", "error", "Error");
+      } finally {
+        manualSubmitBtn.disabled = false;
+        manualSubmitBtn.textContent = "Submit Manual Stock Input";
+      }
+    }
+
     async function processScan(trackingNumber) {
       try {
         const res = await fetch("/api/receive-parcel", {
@@ -389,7 +667,11 @@
           throw new Error(data.details || data.error || "Failed to receive parcel");
         }
 
-        if (data.message) {
+        if (data.no_match) {
+          currentManualTrackingNumber = data.tracking_number || trackingNumber;
+          showToast(data.message, "error", "No Order Found");
+          manualSellerSelect.focus();
+        } else if (data.message) {
           showToast(data.message, "success", "Success");
         } else if (data.exists) {
           showToast(`Parcel ${trackingNumber} marked as Received.`, "success", "Success");
@@ -418,11 +700,57 @@
       await processScan(value);
     });
 
-    document.addEventListener("click", () => {
-      scanInput.focus();
+    document.addEventListener("click", (event) => {
+      const target = event.target;
+    
+      const clickedInsideEditableField =
+        target === scanInput ||
+        target === manualSellerSelect ||
+        target === manualSkuInput ||
+        target === manualSizeInput ||
+        target.closest?.(".manual-card") ||
+        target.closest?.(".toast") ||
+        target.closest?.(".home-button");
+    
+      if (!clickedInsideEditableField) {
+        scanInput.focus();
+      }
     });
-
+    
+    loadManualSellers();
+    renderManualSummary();
     scanInput.focus();
+
+    manualAddBtn.addEventListener("click", () => {
+      addManualItemFromInputs();
+    });
+    
+    manualSubmitBtn.addEventListener("click", () => {
+      submitManualStockInput();
+    });
+    
+    manualSummary.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-remove-manual-index]");
+      if (!button) return;
+    
+      const index = Number(button.dataset.removeManualIndex);
+      if (!Number.isInteger(index) || !manualItems[index]) return;
+    
+      manualItems.splice(index, 1);
+      renderManualSummary();
+    });
+    
+    manualSkuInput.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      manualSizeInput.focus();
+    });
+    
+    manualSizeInput.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      addManualItemFromInputs();
+    });
   </script>
 </body>
 </html>
