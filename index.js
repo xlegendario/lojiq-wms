@@ -787,7 +787,7 @@ async function findSellerRecordBySellerId(sellerIdValue) {
 
   const records = await airtable(AIRTABLE_SELLERS_TABLE)
     .select({
-      fields: ["Seller ID", "Country Code"],
+      fields: ["Seller ID", "Country Code", "Full Name", "Company Name"],
       filterByFormula: `TRIM({Seller ID} & '') = '${safeSellerId}'`,
       maxRecords: 1
     })
