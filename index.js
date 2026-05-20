@@ -771,22 +771,42 @@ async function getSellerCodeByRecordId(sellerRecordId) {
   return asText(record.fields["Seller ID"]);
 }
 
+async function findSellerRecordBySellerId(sellerIdValue) {
+  const safeSellerId = escapeFormulaValue(sellerIdValue);
+
+  const records = await airtable(AIRTABLE_SELLERS_TABLE)
+    .select({
+      fields: ["Seller ID", "Country Code"],
+      filterByFormula: `TRIM({Seller ID} & '') = '${safeSellerId}'`,
+      maxRecords: 1
+    })
+    .firstPage();
+
+  return records[0] || null;
+}
+
 async function getSellerCountryCodeFromOrderFields(orderFields) {
-  const linkedSellerIds = Array.isArray(orderFields["Linked Seller ID"])
+  const linkedSellerCodes = Array.isArray(orderFields["Linked Seller ID"])
     ? orderFields["Linked Seller ID"].map((value) => asText(value)).filter(Boolean)
     : [];
 
-  const claimedSellerIds = Array.isArray(orderFields["Claimed Seller ID"])
+  if (linkedSellerCodes.length) {
+    const sellerRecord = await findSellerRecordBySellerId(linkedSellerCodes[0]);
+
+    if (sellerRecord) {
+      return asText(sellerRecord.fields["Country Code"]);
+    }
+  }
+
+  const claimedSellerRecordIds = Array.isArray(orderFields["Claimed Seller ID"])
     ? orderFields["Claimed Seller ID"].map((value) => asText(value)).filter(Boolean)
     : [];
 
-  const sellerRecordId = linkedSellerIds[0] || claimedSellerIds[0] || "";
-
-  if (!sellerRecordId) {
+  if (!claimedSellerRecordIds.length) {
     return "";
   }
 
-  const sellerRecord = await airtable(AIRTABLE_SELLERS_TABLE).find(sellerRecordId);
+  const sellerRecord = await airtable(AIRTABLE_SELLERS_TABLE).find(claimedSellerRecordIds[0]);
   return asText(sellerRecord.fields["Country Code"]);
 }
 
