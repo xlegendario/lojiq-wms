@@ -806,16 +806,33 @@ async function getSellerRecordFromLinkedSellerValue(value) {
 }
 
 async function getSellerCountryCodeFromOrderFields(orderFields) {
+  const warehouseSellerCodes = [
+    "SE-00309",
+    "SE-00537",
+    "SE-00781",
+    "SE-00455"
+  ];
+
   const linkedSellerValues = Array.isArray(orderFields["Linked Seller ID"])
     ? orderFields["Linked Seller ID"].map((value) => asText(value)).filter(Boolean)
     : [];
 
   if (linkedSellerValues.length) {
-    const sellerRecord = await getSellerRecordFromLinkedSellerValue(
-      linkedSellerValues[0]
-    );
+    const linkedValue = asText(linkedSellerValues[0]).trim().toUpperCase();
+
+    if (warehouseSellerCodes.includes(linkedValue)) {
+      return "NL";
+    }
+
+    const sellerRecord = await getSellerRecordFromLinkedSellerValue(linkedSellerValues[0]);
 
     if (sellerRecord) {
+      const sellerId = asText(sellerRecord.fields["Seller ID"]).trim().toUpperCase();
+
+      if (warehouseSellerCodes.includes(sellerId)) {
+        return "NL";
+      }
+
       return asText(sellerRecord.fields["Country Code"]);
     }
   }
@@ -831,6 +848,12 @@ async function getSellerCountryCodeFromOrderFields(orderFields) {
   const sellerRecord = await airtable(AIRTABLE_SELLERS_TABLE).find(
     claimedSellerRecordIds[0]
   );
+
+  const sellerId = asText(sellerRecord.fields["Seller ID"]).trim().toUpperCase();
+
+  if (warehouseSellerCodes.includes(sellerId)) {
+    return "NL";
+  }
 
   return asText(sellerRecord.fields["Country Code"]);
 }
