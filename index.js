@@ -471,6 +471,13 @@ async function findIncomingStockByGTIN(gtin) {
   return records[0] || null;
 }
 
+const MANUAL_STOCK_SELLER_CODES = [
+  "SE-00309",
+  "SE-00537",
+  "SE-00781",
+  "SE-00455"
+];
+
 function parseTrackingNumbers(value) {
   return asText(value)
     .split(",")
@@ -962,6 +969,132 @@ async function getBuyerOptions() {
     .filter((option) => option.label);
 }
 
+function manualSellerMatchesOrder(orderFields, sellerId, sellerRecordId) {
+  const normalizedSellerId = asText(sellerId).toUpperCase();
+  const normalizedSellerRecordId = asText(sellerRecordId);
+
+  const linkedSellerValues = Array.isArray(orderFields["Linked Seller ID"])
+    ? orderFields["Linked Seller ID"].map((value) => asText(value)).filter(Boolean)
+    : [];
+
+  if (linkedSellerValues.length) {
+    return linkedSellerValues.some((value) => {
+      const normalizedValue = asText(value).toUpperCase();
+      return normalizedValue === normalizedSellerId || value === normalizedSellerRecordId;
+    });
+  }
+
+  const claimedSellerValues = Array.isArray(orderFields["Claimed Seller ID"])
+    ? orderFields["Claimed Seller ID"].map((value) => asText(value)).filter(Boolean)
+    : [];
+
+  return claimedSellerValues.some((value) => {
+    const normalizedValue = asText(value).toUpperCase();
+    return normalizedValue === normalizedSellerId || value === normalizedSellerRecordId;
+  });
+}
+
+async function findManualStockOrderMatch({ sellerId, sellerRecordId, sku, size }) {
+  const safeSku = escapeFormulaValue(sku);
+  const safeSize = escapeFormulaValue(size);
+
+  const records = await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE)
+    .select({
+      fields: [
+        "Order ID",
+        "Order Date",
+        "Fulfillment Status",
+        "Client",
+        "Shopify Order Number",
+        "Store Name",
+        "Product Name",
+        "SKU",
+        "Size",
+        "Linked Inventory Unit",
+        "Linked Seller ID",
+        "Claimed Seller ID",
+        "Shipping Label",
+        "Tracking Number"
+      ],
+      filterByFormula: `AND(
+        ARRAYJOIN({Linked Inventory Unit}) != '',
+        OR(
+          {Fulfillment Status} = 'Allocated',
+          {Fulfillment Status} = 'Awaiting Label'
+        ),
+        TRIM({SKU} & '') = '${safeSku}',
+        TRIM({Size} & '') = '${safeSize}'
+      )`,
+      sort: [{ field: "Order Date", direction: "asc" }]
+    })
+    .all();
+
+  return records.find((record) =>
+    manualSellerMatchesOrder(record.fields || {}, sellerId, sellerRecordId)
+  ) || null;
+}
+
+async function sendLabelRequestForUnfulfilledOrder(orderRecord) {
+  const orderFields = orderRecord.fields || {};
+  const orderId = asText(orderFields["Order ID"]) || orderRecord.id;
+
+  const clientId = first(orderFields["Client"]);
+  if (!clientId) {
+    throw new Error(`The Order ${orderId} has no linked Client`);
+  }
+
+  const merchantRecord = await airtable(AIRTABLE_MERCHANTS_TABLE).find(clientId);
+  const merchantFields = merchantRecord.fields || {};
+
+  const labelRequestChannelId = asText(merchantFields["Label Request Channel ID"]);
+  if (!labelRequestChannelId) {
+    throw new Error(`Missing Label Request Channel ID for merchant linked to order ${orderId}`);
+  }
+
+  if (!APP_PUBLIC_BASE_URL) {
+    throw new Error("Missing APP_PUBLIC_BASE_URL");
+  }
+
+  const labelRequestUrl =
+    `${asText(APP_PUBLIC_BASE_URL).replace(/\/$/, "")}/label-request.html?record_id=${encodeURIComponent(orderRecord.id)}`;
+
+  await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).update(orderRecord.id, {
+    "Fulfillment Status": "Requested Label",
+    "Label Error Message": null
+  });
+
+  const sellerCountryCode = await getSellerCountryCodeFromOrderFields(orderFields);
+
+  const { preferredCourier, instructionText } =
+    await getPreferredCourierForCountryCode(sellerCountryCode);
+
+  const courierInstruction =
+    instructionText ||
+    (preferredCourier ? `Please provide a ${preferredCourier} label.` : "");
+
+  await postLabelRequestToDiscordBot({
+    channelId: labelRequestChannelId,
+    recordId: orderRecord.id,
+    orderId,
+    shopifyOrderNumber: asText(orderFields["Shopify Order Number"]),
+    productName: asText(orderFields["Product Name"]),
+    sku: asText(orderFields["SKU"]),
+    size: asText(orderFields["Size"]),
+    storeName: asText(orderFields["Store Name"]) || asText(merchantFields["Store Name"]),
+    labelRequestUrl,
+    sellerCountryCode,
+    preferredCourier,
+    courierInstruction
+  });
+
+  return {
+    order_id: orderId,
+    shopify_order_number: asText(orderFields["Shopify Order Number"]),
+    sku: asText(orderFields["SKU"]),
+    size: asText(orderFields["Size"])
+  };
+}
+
 async function markUnfulfilledOrderLabelError(recordId, errorMessage) {
   await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).update(recordId, {
     "Fulfillment Status": "Label Error",
@@ -1354,6 +1487,133 @@ async function getPackShipOutboundDetails(outboundId, sourceTable) {
     items
   };
 }
+
+app.get("/api/manual-stock-sellers", async (_req, res) => {
+  try {
+    const records = await Promise.all(
+      MANUAL_STOCK_SELLER_CODES.map((sellerCode) =>
+        findSellerRecordBySellerId(sellerCode)
+      )
+    );
+
+    const sellers = records
+      .filter(Boolean)
+      .map((record) => {
+        const sellerId = asText(record.fields["Seller ID"]);
+        const companyName = asText(record.fields["Company Name"]);
+        const fullName = asText(record.fields["Full Name"]);
+
+        return {
+          seller_id: sellerId,
+          seller_record_id: record.id,
+          label: `${sellerId} — ${companyName || fullName || "Unknown"}`
+        };
+      });
+
+    return res.status(200).json({
+      ok: true,
+      sellers
+    });
+  } catch (error) {
+    console.error("manual-stock-sellers failed:", error);
+    return res.status(500).json({
+      error: "Failed to load manual stock sellers",
+      details: error.message
+    });
+  }
+});
+
+app.post("/api/manual-stock-label-request", async (req, res) => {
+  try {
+    const sellerId = asText(req.body?.seller_id).toUpperCase();
+    const sellerRecordId = asText(req.body?.seller_record_id);
+    const trackingNumber = asText(req.body?.tracking_number);
+    const items = Array.isArray(req.body?.items) ? req.body.items : [];
+
+    if (!MANUAL_STOCK_SELLER_CODES.includes(sellerId)) {
+      return res.status(400).json({ error: "Invalid seller_id" });
+    }
+
+    if (!sellerRecordId) {
+      return res.status(400).json({ error: "Missing seller_record_id" });
+    }
+
+    if (!items.length) {
+      return res.status(400).json({ error: "No items provided" });
+    }
+
+    const results = [];
+
+    for (const item of items) {
+      const sku = asText(item.sku);
+      const size = asText(item.size);
+
+      if (!sku || !size) {
+        results.push({
+          sku,
+          size,
+          status: "missing_input"
+        });
+        continue;
+      }
+
+      const orderRecord = await findManualStockOrderMatch({
+        sellerId,
+        sellerRecordId,
+        sku,
+        size
+      });
+
+      if (!orderRecord) {
+        results.push({
+          sku,
+          size,
+          status: "not_found"
+        });
+        continue;
+      }
+
+      const labelResult = await sendLabelRequestForUnfulfilledOrder(orderRecord);
+
+      results.push({
+        sku,
+        size,
+        status: "label_requested",
+        order_id: labelResult.order_id,
+        shopify_order_number: labelResult.shopify_order_number
+      });
+    }
+
+    const matchedCount = results.filter((result) => result.status === "label_requested").length;
+    const notFoundCount = results.filter((result) => result.status === "not_found").length;
+
+    let incomingStockCreated = false;
+
+    if (matchedCount === 0 && trackingNumber) {
+      await airtable(AIRTABLE_INCOMING_STOCK_TABLE).create({
+        "Tracking Number": trackingNumber,
+        "Status": "Received",
+        "Received At": new Date().toISOString()
+      });
+
+      incomingStockCreated = true;
+    }
+
+    return res.status(200).json({
+      ok: true,
+      matched_count: matchedCount,
+      not_found_count: notFoundCount,
+      incoming_stock_created: incomingStockCreated,
+      results
+    });
+  } catch (error) {
+    console.error("manual-stock-label-request failed:", error);
+    return res.status(500).json({
+      error: "Manual stock label request failed",
+      details: error.message
+    });
+  }
+});
 
 app.get("/", (_req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
@@ -1846,16 +2106,13 @@ app.post("/api/receive-parcel", async (req, res) => {
       });
     }
 
-    // 3. Fallback: create placeholder in Incoming Stock (existing behavior)
-    await airtable(AIRTABLE_INCOMING_STOCK_TABLE).create({
-      "Tracking Number": trackingNumber,
-      "Status": "Received",
-      "Received At": now
-    });
-
-    return res.json({
-      message: "Parcel created",
-      exists: false
+    // 3. Fallback: no direct Incoming Stock yet.
+    // Let the user try Manual Stock Input first.
+    return res.status(200).json({
+      message: `No order found for tracking ${trackingNumber}. Use Manual Stock Input below.`,
+      exists: false,
+      no_match: true,
+      tracking_number: trackingNumber
     });
   } catch (error) {
     console.error(error);
