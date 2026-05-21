@@ -1112,7 +1112,10 @@ async function sendFinalLabelToDiscordChannel({
     throw new Error("Missing DISCORD_TOKEN");
   }
 
-  const url = `https://discord.com/api/v10/channels/${channelId}/messages`;
+  const fallbackChannelId = "1506989427183058996";
+  const targetChannelId = asText(channelId) || fallbackChannelId;
+
+  const url = `https://discord.com/api/v10/channels/${targetChannelId}/messages`;
 
   const body = {
     embeds: [
@@ -1124,7 +1127,9 @@ async function sendFinalLabelToDiscordChannel({
           `**Tracking:** ${trackingNumber}\n\n` +
           `[📄 Download Label](${labelUrl})`,
         footer: {
-          text: "Kickz Caviar"
+          text: asText(channelId)
+            ? "Kickz Caviar"
+            : "Kickz Caviar • Internal fallback"
         }
       }
     ]
@@ -1145,7 +1150,9 @@ async function sendFinalLabelToDiscordChannel({
     throw new Error(`Discord API error: ${response.status} ${text}`);
   }
 
-  await markChannelLabelOk(channelId);
+  if (asText(channelId)) {
+    await markChannelLabelOk(channelId);
+  }
 
   return true;
 }
