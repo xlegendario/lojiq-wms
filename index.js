@@ -3114,10 +3114,35 @@ app.post("/send-label-to-channel", async (req, res) => {
 
     const claimedChannelId = asText(fields["Claimed Channel ID"]);
     const wtbChannelId = asText(fields["WTB Created Channel ID"]);
-    const targetChannelId = claimedChannelId || wtbChannelId;
-
+    
+    let targetChannelId = claimedChannelId || wtbChannelId;
+    
     if (!targetChannelId) {
-      throw new Error("No channel ID found");
+      const linkedInventoryUnitIds = Array.isArray(fields["Linked Inventory Unit"])
+        ? fields["Linked Inventory Unit"]
+        : [];
+    
+      if (!linkedInventoryUnitIds.length) {
+        throw new Error("No channel ID found and no linked inventory unit found");
+      }
+    
+      const inventoryRecord = await airtable(AIRTABLE_INVENTORY_UNITS_TABLE)
+        .find(linkedInventoryUnitIds[0]);
+    
+      const sellerRecordId = Array.isArray(inventoryRecord.fields["Seller ID"])
+        ? inventoryRecord.fields["Seller ID"][0]
+        : "";
+    
+      if (!sellerRecordId) {
+        throw new Error("No seller linked to inventory unit");
+      }
+    
+      const sellerRecord = await airtable(AIRTABLE_SELLERS_TABLE).find(sellerRecordId);
+      targetChannelId = asText(sellerRecord.fields["Labels Channel ID"]);
+    
+      if (!targetChannelId) {
+        throw new Error("No channel ID found and seller has no Labels Channel ID");
+      }
     }
 
     const permanentLabelUrl = asText(fields["Shipping Label URL (Permanent)"]);
