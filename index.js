@@ -1106,7 +1106,8 @@ async function sendFinalLabelToDiscordChannel({
   channelId,
   orderId,
   trackingNumber,
-  labelUrl
+  labelUrl,
+  markLabelOk = true
 }) {
   if (!process.env.DISCORD_TOKEN) {
     throw new Error("Missing DISCORD_TOKEN");
@@ -1150,7 +1151,7 @@ async function sendFinalLabelToDiscordChannel({
     throw new Error(`Discord API error: ${response.status} ${text}`);
   }
 
-  if (asText(channelId)) {
+  if (markLabelOk && asText(channelId)) {
     await markChannelLabelOk(channelId);
   }
 
@@ -3116,6 +3117,7 @@ app.post("/send-label-to-channel", async (req, res) => {
     const wtbChannelId = asText(fields["WTB Created Channel ID"]);
     
     let targetChannelId = claimedChannelId || wtbChannelId;
+    let markLabelOk = true;
     
     if (!targetChannelId) {
       const linkedInventoryUnitIds = Array.isArray(fields["Linked Inventory Unit"])
@@ -3139,6 +3141,7 @@ app.post("/send-label-to-channel", async (req, res) => {
     
       const sellerRecord = await airtable(AIRTABLE_SELLERS_TABLE).find(sellerRecordId);
       targetChannelId = asText(sellerRecord.fields["Labels Channel ID"]);
+      markLabelOk = false;
     
       if (!targetChannelId) {
         throw new Error("No channel ID found and seller has no Labels Channel ID");
@@ -3165,7 +3168,8 @@ app.post("/send-label-to-channel", async (req, res) => {
       channelId: targetChannelId,
       orderId: asText(fields["Order ID"]) || record.id,
       trackingNumber,
-      labelUrl
+      labelUrl,
+      markLabelOk
     });
 
     // 👇 voorkom dubbele sends
