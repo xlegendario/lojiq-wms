@@ -1158,6 +1158,78 @@ async function sendFinalLabelToDiscordChannel({
   return true;
 }
 
+async function sendFinalLabelToDiscordDM({
+  discordUserId,
+  orderId,
+  trackingNumber,
+  labelUrl
+}) {
+  if (!process.env.DISCORD_TOKEN) {
+    throw new Error("Missing DISCORD_TOKEN");
+  }
+
+  const userId = asText(discordUserId);
+
+  if (!userId) {
+    throw new Error("Missing Discord ID for seller DM fallback");
+  }
+
+  const dmResponse = await fetch("https://discord.com/api/v10/users/@me/channels", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bot ${process.env.DISCORD_TOKEN}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      recipient_id: userId
+    })
+  });
+
+  const dmText = await dmResponse.text().catch(() => "");
+  let dmData = {};
+
+  try {
+    dmData = dmText ? JSON.parse(dmText) : {};
+  } catch {
+    dmData = {};
+  }
+
+  if (!dmResponse.ok || !dmData.id) {
+    throw new Error(`Failed to create DM: ${dmResponse.status} ${dmText}`);
+  }
+
+  const messageResponse = await fetch(`https://discord.com/api/v10/channels/${dmData.id}/messages`, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bot ${process.env.DISCORD_TOKEN}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      embeds: [
+        {
+          title: "📦 Shipping Label Ready",
+          color: 0x00b894,
+          description:
+            `**Order:** ${orderId}\n` +
+            `**Tracking:** ${trackingNumber}\n\n` +
+            `[📄 Download Label](${labelUrl})`,
+          footer: {
+            text: "Kickz Caviar"
+          }
+        }
+      ]
+    })
+  });
+
+  const messageText = await messageResponse.text().catch(() => "");
+
+  if (!messageResponse.ok) {
+    throw new Error(`Discord DM send failed: ${messageResponse.status} ${messageText}`);
+  }
+
+  return true;
+}
+
 async function markChannelLabelOk(channelId) {
   if (!process.env.DISCORD_TOKEN) {
     throw new Error("Missing DISCORD_TOKEN");
@@ -3141,10 +3213,11 @@ app.post("/send-label-to-channel", async (req, res) => {
     
       const sellerRecord = await airtable(AIRTABLE_SELLERS_TABLE).find(sellerRecordId);
       targetChannelId = asText(sellerRecord.fields["Labels Channel ID"]);
+      const sellerDiscordId = asText(sellerRecord.fields["Discord ID"]);
       markLabelOk = false;
-    
-      if (!targetChannelId) {
-        throw new Error("No channel ID found and seller has no Labels Channel ID");
+      
+      if (!targetChannelId && !sellerDiscordId) {
+        throw new Error("No channel ID found and seller has no Labels Channel ID or Discord ID");
       }
     }
 
@@ -3164,13 +3237,22 @@ app.post("/send-label-to-channel", async (req, res) => {
     }
 
     // 👇 gebruik je bestaande functie
-    await sendFinalLabelToDiscordChannel({
-      channelId: targetChannelId,
-      orderId: asText(fields["Order ID"]) || record.id,
-      trackingNumber,
-      labelUrl,
-      markLabelOk
-    });
+    if (targetChannelId) {
+      await sendFinalLabelToDiscordChannel({
+        channelId: targetChannelId,
+        orderId: asText(fields["Order ID"]) || record.id,
+        trackingNumber,
+        labelUrl,
+        markLabelOk
+      });
+    } else {
+      await sendFinalLabelToDiscordDM({
+        discordUserId: sellerDiscordId,
+        orderId: asText(fields["Order ID"]) || record.id,
+        trackingNumber,
+        labelUrl
+      });
+    }
 
     // 👇 voorkom dubbele sends
     await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).update(recordId, {
