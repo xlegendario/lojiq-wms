@@ -1107,6 +1107,9 @@ async function sendFinalLabelToDiscordChannel({
   orderId,
   trackingNumber,
   labelUrl,
+  productName,
+  sku,
+  size,
   markLabelOk = true
 }) {
   if (!process.env.DISCORD_TOKEN) {
@@ -1124,6 +1127,9 @@ async function sendFinalLabelToDiscordChannel({
         title: "📦 Shipping Label Ready",
         color: 0x00b894,
         description:
+          `**Product:** ${productName || "-"}\n` +
+          `**SKU:** ${sku || "-"}\n` +
+          `**Size:** ${size || "-"}\n\n` +
           `**Order:** ${orderId}\n` +
           `**Tracking:** ${trackingNumber}\n\n` +
           `[📄 Download Label](${labelUrl})`,
@@ -1162,7 +1168,10 @@ async function sendFinalLabelToDiscordDM({
   discordUserId,
   orderId,
   trackingNumber,
-  labelUrl
+  labelUrl,
+  productName,
+  sku,
+  size
 }) {
   if (!process.env.DISCORD_TOKEN) {
     throw new Error("Missing DISCORD_TOKEN");
@@ -1210,6 +1219,9 @@ async function sendFinalLabelToDiscordDM({
           title: "📦 Shipping Label Ready",
           color: 0x00b894,
           description:
+            `**Product:** ${productName || "-"}\n` +
+            `**SKU:** ${sku || "-"}\n` +
+            `**Size:** ${size || "-"}\n\n` +
             `**Order:** ${orderId}\n` +
             `**Tracking:** ${trackingNumber}\n\n` +
             `[📄 Download Label](${labelUrl})`,
@@ -3190,6 +3202,7 @@ app.post("/send-label-to-channel", async (req, res) => {
     
     let targetChannelId = claimedChannelId || wtbChannelId;
     let markLabelOk = true;
+    let sellerDiscordId = "";
     
     if (!targetChannelId) {
       const linkedInventoryUnitIds = Array.isArray(fields["Linked Inventory Unit"])
@@ -3213,7 +3226,7 @@ app.post("/send-label-to-channel", async (req, res) => {
     
       const sellerRecord = await airtable(AIRTABLE_SELLERS_TABLE).find(sellerRecordId);
       targetChannelId = asText(sellerRecord.fields["Labels Channel ID"]);
-      const sellerDiscordId = asText(sellerRecord.fields["Discord ID"]);
+      sellerDiscordId = asText(sellerRecord.fields["Discord ID"]);
       markLabelOk = false;
       
       if (!targetChannelId && !sellerDiscordId) {
@@ -3243,6 +3256,9 @@ app.post("/send-label-to-channel", async (req, res) => {
         orderId: asText(fields["Order ID"]) || record.id,
         trackingNumber,
         labelUrl,
+        productName: asText(fields["Product Name"]),
+        sku: asText(fields["SKU"]),
+        size: asText(fields["Size"]),
         markLabelOk
       });
     } else {
@@ -3250,7 +3266,10 @@ app.post("/send-label-to-channel", async (req, res) => {
         discordUserId: sellerDiscordId,
         orderId: asText(fields["Order ID"]) || record.id,
         trackingNumber,
-        labelUrl
+        labelUrl,
+        productName: asText(fields["Product Name"]),
+        sku: asText(fields["SKU"]),
+        size: asText(fields["Size"])
       });
     }
 
