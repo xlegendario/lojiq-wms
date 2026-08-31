@@ -43,7 +43,8 @@ const {
   R2_BUCKET,
   R2_PUBLIC_BASE_URL,
   APP_PUBLIC_BASE_URL,
-  DISCORD_BOT_BASE_URL
+  DISCORD_BOT_BASE_URL,
+  KICKZ_PORTAL_BASE_URL = "https://kickz-caviar-portal.onrender.com"
 } = process.env;
 
 if (!AIRTABLE_TOKEN) {
@@ -1364,6 +1365,79 @@ async function postLabelRequestToDiscordBot({
 
   return data;
 }
+/*
+ * The label-request endpoints below serve two kinds of order.
+ *
+ * A store order lives in this base and is handled here, exactly as it
+ * always was. A Lojiq manual order is a Member WTB and lives in the
+ * Kickz Caviar portal, which already owns every rule about it: where the
+ * file is stored, which fields it writes, what happens after. So these
+ * two forward and normalise, and hold no rule of their own - a second
+ * copy of those rules is precisely what would drift apart.
+ */
+async function fetchKickzMemberWtbLabelRequest(recordId) {
+  const url =
+    `${KICKZ_PORTAL_BASE_URL}/api/member-wtb/label-request/${encodeURIComponent(recordId)}`;
+
+  const response = await fetch(url);
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(
+      data.details || data.error || `Label request lookup failed (${response.status})`
+    );
+  }
+
+  // Mapped onto the shape a store order already answers with, so the page
+  // keeps one renderer instead of a branch per field.
+  return {
+    record_id: asText(data.record_id) || recordId,
+    order_id: asText(data.member_wtb_id),
+    shopify_order_number: "",
+    product_name: asText(data.product_name),
+    size: asText(data.size),
+    sku: asText(data.sku),
+    store_name: asText(data.buyer_name),
+    fulfillment_status: "",
+    tracking_number: asText(data.tracking_number)
+  };
+}
+
+async function submitKickzMemberWtbLabel({
+  recordId,
+  trackingNumber,
+  fileName,
+  fileDataUrl,
+  fileType
+}) {
+  const response = await fetch(
+    `${KICKZ_PORTAL_BASE_URL}/api/member-wtb/label-request-submit`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        member_wtb_record_id: recordId,
+        tracking_number: trackingNumber,
+        label_file: {
+          name: fileName,
+          type: fileType || "application/pdf",
+          data: fileDataUrl
+        }
+      })
+    }
+  );
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(
+      data.details || data.error || `Label submit failed (${response.status})`
+    );
+  }
+
+  return data;
+}
+
 async function getUnfulfilledOrderRecordById(recordId) {
   return airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).find(recordId);
 }
@@ -2234,6 +2308,14 @@ app.get("/api/label-request-order/:recordId", async (req, res) => {
       return res.status(400).json({ error: "Missing recordId" });
     }
 
+    // Without the type this reads from this base, which is every store
+    // order and therefore every caller that existed before today.
+    if (asText(req.query?.type) === "member_wtb") {
+      const order = await fetchKickzMemberWtbLabelRequest(recordId);
+
+      return res.status(200).json({ ok: true, order });
+    }
+
     const record = await getUnfulfilledOrderRecordById(recordId);
     const fields = record.fields || {};
 
@@ -2283,6 +2365,24 @@ app.post("/api/label-request-submit", async (req, res) => {
       return res.status(400).json({ error: "Missing file_data_url" });
     }
 
+    if (asText(req.body?.type) === "member_wtb") {
+      await submitKickzMemberWtbLabel({
+        recordId,
+        trackingNumber,
+        fileName,
+        fileDataUrl,
+        fileType: asText(req.body?.file_type)
+      });
+
+      // Kickz Caviar writes the label, the tracking number and the
+      // timestamp; the automation on that timestamp then posts the label
+      // to Discord. Nothing is written from here.
+      return res.status(200).json({
+        ok: true,
+        message: "Label saved"
+      });
+    }
+
     const record = await getUnfulfilledOrderRecordById(recordId);
     const fields = record.fields || {};
     const orderId = asText(fields["Order ID"]) || record.id;
@@ -2305,7 +2405,12 @@ app.post("/api/label-request-submit", async (req, res) => {
     console.error("label-request-submit failed:", error);
 
     const recordId = asText(req.body?.record_id);
-    if (recordId) {
+
+    // A Member WTB id is not a row in Unfulfilled Orders Log, and an
+    // Airtable record id resolves across the whole base - so without this
+    // guard a failed manual upload would write its error onto whatever
+    // that id happens to be.
+    if (recordId && asText(req.body?.type) !== "member_wtb") {
       try {
         await markUnfulfilledOrderLabelError(recordId, error.message);
       } catch (updateError) {
