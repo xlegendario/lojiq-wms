@@ -2,17 +2,24 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Lojiq WMS - Label Request</title>
+  <title>Lojiq - Label Request</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <style>
+    /* The same palette the client portal and the guide use: black and
+       anthracite carry the page, and the Lojiq blue is spent only on
+       what you act on. The variable names are unchanged, so every rule
+       below still reads the same - only the values moved. */
     :root {
-      --bg: #07111F;
-      --panel: #0E2238;
-      --border: #163252;
+      --bg: #08080A;
+      --panel: #121215;
+      --panel-2: #17171B;
+      --border: #26262B;
       --primary: #2F80ED;
       --primary-soft: #66B3FF;
-      --text: #DCEBFF;
-      --muted: #8FAECC;
+      --text: #E9E9EE;
+      --muted: #8B8B95;
+      --green: #16B364;
+      --red: #F04438;
     }
 
     * { box-sizing: border-box; }
@@ -20,9 +27,7 @@
     body {
       margin: 0;
       font-family: Arial, Helvetica, sans-serif;
-      background:
-        radial-gradient(circle at top, rgba(47,128,237,0.18), transparent 30%),
-        linear-gradient(180deg, #050D18 0%, var(--bg) 100%);
+      background: var(--bg);
       color: var(--text);
       min-height: 100vh;
     }
@@ -40,16 +45,25 @@
 
     .page-title {
       margin: 0;
-      font-size: 52px;
+      font-size: 34px;
       font-weight: 800;
+      letter-spacing: -0.01em;
+    }
+
+    .page-subtitle {
+      color: var(--muted);
+      font-size: 15px;
+      margin-top: 10px;
     }
 
     .card {
-      background: linear-gradient(180deg, rgba(16,41,68,0.95), rgba(14,34,56,0.95));
+      background: var(--panel);
       border: 1px solid var(--border);
-      border-radius: 18px;
+      border-radius: 16px;
       padding: 24px;
-      box-shadow: 0 10px 30px rgba(0,0,0,0.28);
+      box-shadow:
+        0 10px 30px rgba(0,0,0,0.38),
+        inset 0 1px 0 rgba(255,255,255,0.03);
     }
 
     .grid {
@@ -71,10 +85,22 @@
       width: 100%;
       border-radius: 12px;
       border: 1px solid var(--border);
-      background: rgba(7,17,31,0.45);
+      background: var(--panel-2);
       color: var(--text);
       padding: 14px;
       font-size: 15px;
+    }
+
+    /* A read-only value and an editable field looked identical, which
+       on a page whose whole job is two inputs is worth separating. */
+    .field-value {
+      color: var(--muted);
+    }
+
+    .input:focus-visible,
+    .button:focus-visible {
+      outline: 2px solid var(--primary-soft);
+      outline-offset: 2px;
     }
 
     .field-value {
@@ -85,7 +111,8 @@
 
     .input[type="file"] {
       padding: 10px 14px;
-      background: rgba(7,17,31,0.7);
+      background: var(--panel-2);
+      color: var(--muted);
     }
 
     .actions {
@@ -102,8 +129,13 @@
       padding: 14px 18px;
       font-size: 15px;
       font-weight: 700;
-      background: linear-gradient(135deg, var(--primary), var(--primary-soft));
-      color: white;
+      background: linear-gradient(180deg, var(--primary-soft), var(--primary));
+      color: #04121F;
+    }
+
+    .button[disabled] {
+      opacity: 0.6;
+      cursor: default;
     }
 
     .button.secondary {
@@ -168,6 +200,11 @@
     }
 
     @media (max-width: 800px) {
+      /* 100px of empty space above the title is most of a phone screen. */
+      .wrap {
+        padding-top: 48px;
+      }
+
       .grid {
         grid-template-columns: 1fr;
       }
@@ -186,7 +223,7 @@
   <div class="wrap">
     <div class="page-header">
       <h1 class="page-title">Upload Shipping Label</h1>
-      <p style="text-align:center; color:#8FAECC; margin-top:-10px;">
+      <p class="page-subtitle">
         Please upload the shipping label and tracking number for this order.
       </p>
     </div>
@@ -194,7 +231,7 @@
     <div class="card">
       <div class="grid">
         <div>
-          <div class="field-label">Order ID</div>
+          <div id="orderIdLabel" class="field-label">Order ID</div>
           <div id="orderIdValue" class="field-value">Loading...</div>
         </div>
 
@@ -203,7 +240,7 @@
           <div id="storeNameValue" class="field-value">Loading...</div>
         </div>
 
-        <div>
+        <div id="shopifyOrderNumberField">
           <div class="field-label">Shopify Order Number</div>
           <div id="shopifyOrderNumberValue" class="field-value">Loading...</div>
         </div>
@@ -249,6 +286,8 @@
     const storeNameValue = document.getElementById("storeNameValue");
     const shopifyOrderNumberValue = document.getElementById("shopifyOrderNumberValue");
     const skuValue = document.getElementById("skuValue");
+    const orderIdLabel = document.getElementById("orderIdLabel");
+    const shopifyOrderNumberField = document.getElementById("shopifyOrderNumberField");
     const productNameValue = document.getElementById("productNameValue");
     const sizeValue = document.getElementById("sizeValue");
     const trackingNumberInput = document.getElementById("trackingNumberInput");
@@ -258,6 +297,13 @@
 
     const params = new URLSearchParams(window.location.search);
     const recordId = params.get("record_id") || "";
+
+    // Which kind of order this is, passed in rather than guessed: every
+    // Airtable record id starts with "rec", so the id itself says
+    // nothing about which table it belongs to. No type means a store
+    // order, which is what every existing link is.
+    const orderType = params.get("type") || "";
+    const isMemberWtb = orderType === "member_wtb";
 
     function escapeHtml(value) {
       return String(value ?? "")
@@ -305,7 +351,12 @@
         throw new Error("Missing record_id in URL");
       }
 
-      const res = await fetch(`/api/label-request-order/${encodeURIComponent(recordId)}`);
+      const query = isMemberWtb ? `?type=${encodeURIComponent(orderType)}` : "";
+
+      const res = await fetch(
+        `/api/label-request-order/${encodeURIComponent(recordId)}${query}`
+      );
+
       const data = await res.json();
 
       if (!res.ok) {
@@ -313,6 +364,13 @@
       }
 
       const order = data.order || {};
+
+      // A manual order has no Shopify order behind it, so that tile is
+      // removed rather than shown holding a dash.
+      if (isMemberWtb) {
+        orderIdLabel.textContent = "Order Number";
+        shopifyOrderNumberField.style.display = "none";
+      }
 
       orderIdValue.textContent = order.order_id || "—";
       storeNameValue.textContent = order.store_name || "—";
@@ -362,7 +420,9 @@
             record_id: recordId,
             tracking_number: trackingNumber,
             file_name: file.name,
-            file_data_url: fileDataUrl
+            file_type: file.type,
+            file_data_url: fileDataUrl,
+            type: orderType
           })
         });
 
