@@ -303,7 +303,13 @@
     // nothing about which table it belongs to. No type means a store
     // order, which is what every existing link is.
     const orderType = params.get("type") || "";
-    const isMemberWtb = orderType === "member_wtb";
+
+    // What the link claimed, until the server says otherwise. It answers
+    // with the kind the record actually is, so a link written before the
+    // type existed - an old Discord button, a bookmark, a cached page -
+    // still lays out correctly instead of quietly showing a store order
+    // with half its fields empty.
+    let resolvedOrderType = orderType;
 
     function escapeHtml(value) {
       return String(value ?? "")
@@ -351,7 +357,7 @@
         throw new Error("Missing record_id in URL");
       }
 
-      const query = isMemberWtb ? `?type=${encodeURIComponent(orderType)}` : "";
+      const query = orderType ? `?type=${encodeURIComponent(orderType)}` : "";
 
       const res = await fetch(
         `/api/label-request-order/${encodeURIComponent(recordId)}${query}`
@@ -365,9 +371,11 @@
 
       const order = data.order || {};
 
+      resolvedOrderType = data.order_type || orderType;
+
       // A manual order has no Shopify order behind it, so that tile is
       // removed rather than shown holding a dash.
-      if (isMemberWtb) {
+      if (resolvedOrderType === "member_wtb") {
         orderIdLabel.textContent = "Order Number";
         shopifyOrderNumberField.style.display = "none";
       }
@@ -422,7 +430,7 @@
             file_name: file.name,
             file_type: file.type,
             file_data_url: fileDataUrl,
-            type: orderType
+            type: resolvedOrderType
           })
         });
 
