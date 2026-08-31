@@ -1375,6 +1375,44 @@ async function postLabelRequestToDiscordBot({
  * two forward and normalise, and hold no rule of their own - a second
  * copy of those rules is precisely what would drift apart.
  */
+/*
+ * Whether this id is really a row in Unfulfilled Orders Log.
+ *
+ * .find() cannot answer that: an Airtable record id resolves across the
+ * whole base, so asking this table for a Member WTB id hands one back,
+ * and the fields the two tables happen to share then fill in while the
+ * rest sits empty. That is not an error anywhere - it just quietly shows
+ * half a page. A select scoped to the table only returns rows that are
+ * actually in it, so this is the question the id can honestly answer.
+ *
+ * It exists so the two endpoints below do not depend on the caller
+ * passing a type. The type is still read first and still decides when it
+ * is there; this is what happens when a link predates it.
+ */
+async function isUnfulfilledOrderRecord(recordId) {
+  const records = await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE)
+    .select({
+      filterByFormula: `RECORD_ID() = "${recordId}"`,
+      maxRecords: 1
+    })
+    .firstPage();
+
+  return records.length > 0;
+}
+
+/*
+ * Which of the two kinds of order an id is, given whatever the caller
+ * said about it. An explicit type wins and costs nothing; without one
+ * the base is asked.
+ */
+async function resolveLabelRequestType(recordId, declaredType) {
+  if (asText(declaredType) === "member_wtb") return "member_wtb";
+
+  return (await isUnfulfilledOrderRecord(recordId))
+    ? "store_order"
+    : "member_wtb";
+}
+
 async function fetchKickzMemberWtbLabelRequest(recordId) {
   const url =
     `${KICKZ_PORTAL_BASE_URL}/api/member-wtb/label-request/${encodeURIComponent(recordId)}`;
@@ -2308,12 +2346,21 @@ app.get("/api/label-request-order/:recordId", async (req, res) => {
       return res.status(400).json({ error: "Missing recordId" });
     }
 
-    // Without the type this reads from this base, which is every store
-    // order and therefore every caller that existed before today.
-    if (asText(req.query?.type) === "member_wtb") {
+    const orderType = await resolveLabelRequestType(
+      recordId,
+      req.query?.type
+    );
+
+    if (orderType === "member_wtb") {
       const order = await fetchKickzMemberWtbLabelRequest(recordId);
 
-      return res.status(200).json({ ok: true, order });
+      // Answered rather than assumed, so the page can lay itself out
+      // for the right kind of order even when the link said nothing.
+      return res.status(200).json({
+        ok: true,
+        order_type: orderType,
+        order
+      });
     }
 
     const record = await getUnfulfilledOrderRecordById(recordId);
@@ -2321,6 +2368,7 @@ app.get("/api/label-request-order/:recordId", async (req, res) => {
 
     return res.status(200).json({
       ok: true,
+      order_type: orderType,
       order: {
         record_id: record.id,
         order_id: asText(fields["Order ID"]),
@@ -2343,6 +2391,10 @@ app.get("/api/label-request-order/:recordId", async (req, res) => {
 });
 
 app.post("/api/label-request-submit", async (req, res) => {
+  // Read by the catch below, which must not write onto a record that
+  // is not in this table. Set before anything can throw.
+  let isMemberWtbRequest = asText(req.body?.type) === "member_wtb";
+
   try {
     const recordId = asText(req.body?.record_id);
     const trackingNumber = asText(req.body?.tracking_number);
@@ -2365,7 +2417,14 @@ app.post("/api/label-request-submit", async (req, res) => {
       return res.status(400).json({ error: "Missing file_data_url" });
     }
 
-    if (asText(req.body?.type) === "member_wtb") {
+    const orderType = await resolveLabelRequestType(
+      recordId,
+      req.body?.type
+    );
+
+    isMemberWtbRequest = orderType === "member_wtb";
+
+    if (isMemberWtbRequest) {
       await submitKickzMemberWtbLabel({
         recordId,
         trackingNumber,
@@ -2410,7 +2469,7 @@ app.post("/api/label-request-submit", async (req, res) => {
     // Airtable record id resolves across the whole base - so without this
     // guard a failed manual upload would write its error onto whatever
     // that id happens to be.
-    if (recordId && asText(req.body?.type) !== "member_wtb") {
+    if (recordId && !isMemberWtbRequest) {
       try {
         await markUnfulfilledOrderLabelError(recordId, error.message);
       } catch (updateError) {
