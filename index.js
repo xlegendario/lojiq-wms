@@ -2405,7 +2405,24 @@ app.post("/api/label-request-submit", async (req, res) => {
       return res.status(400).json({ error: "Missing record_id" });
     }
 
-    if (!trackingNumber) {
+    /*
+     * Required, except where nobody has one to give.
+     *
+     * Every flow that reaches here through a store or a consignor produces
+     * the label itself, so a missing tracking number means a caller made a
+     * mistake and should be told - that guard stays exactly as it was.
+     *
+     * A marketplace label is the exception. Woovin books the parcel on its
+     * own carrier account and exposes no tracking number anywhere: not in
+     * the order, not in the webhook, not in their dashboard. We read what
+     * we can off the label itself, and when the carrier draws the number
+     * rather than writing it there is nothing to read. Refusing the label
+     * over that would leave a consignor unable to ship at all, which is a
+     * far worse outcome than a blank column.
+     */
+    const isMarketplaceLabel = asText(req.body?.type) === "marketplace";
+
+    if (!trackingNumber && !isMarketplaceLabel) {
       return res.status(400).json({ error: "Missing tracking_number" });
     }
 
