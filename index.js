@@ -49,6 +49,14 @@ const {
     and every return at the same time.
   */
   SENDCLOUD_MARKETPLACE_SENDER_ADDRESS_ID = "",
+  /*
+    What a boxed pair actually weighs, declared rather than guessed.
+
+    It picks the method as well as paying for it: most UPS tariffs are one
+    method per half kilo, so a parcel declared at half a kilo is quoted in
+    the wrong band and re-weighed by the courier at their own price.
+  */
+  SENDCLOUD_MARKETPLACE_WEIGHT_KG = "1.5",
   R2_ACCOUNT_ID,
   R2_ACCESS_KEY_ID,
   R2_SECRET_ACCESS_KEY,
@@ -304,10 +312,9 @@ function customerAddressFromOrderFields(orderFields) {
  *
  * Label Request Routing already answers this for a human, in a sentence.
  * The same row answers it for us: a country that reads UPS/DPD can do both
- * against our Dutch sender, and DPD is the cheaper of the two every time -
- * so there the choice is made rather than offered. Everywhere else only UPS
- * reaches, which is why those rows say so and why UPS is the fallback when
- * a country has no row at all.
+ * against our Dutch sender, and where it may, it always does. Everywhere
+ * else only UPS reaches, which is why those rows say so and why UPS is the
+ * fallback when a country has no row at all.
  */
 async function pickMarketplaceCarrier(sellerCountryCode) {
   const { preferredCourier } = await getPreferredCourierForCountryCode(
@@ -318,17 +325,42 @@ async function pickMarketplaceCarrier(sellerCountryCode) {
 }
 
 /*
- * Sendcloud's own id for that courier to that country.
+ * Which Sendcloud method each courier means, by name.
  *
- * Asked rather than kept in a table. The Outbound Shipping Codes table
- * holds one id for three countries and knows nothing about couriers, so it
- * cannot express "DPD where DPD reaches" - and a table of ids is wrong the
- * day Sendcloud changes a contract, silently, on the next label.
- *
- * Cheapest of the ones that match, because several methods can carry the
- * same parcel and the difference between them is the price.
+ * One service per courier, and deliberately not the cheapest one on offer:
+ * what Sendcloud quotes is not what we pay, because both couriers bill on
+ * our own contract the moment their method is picked. So the cheapest-looking
+ * option is a number with no bearing on the invoice, and choosing on it would
+ * quietly move parcels onto a service nobody agreed to - a pick-up point the
+ * shopper never chose, or a drop-off the consignor cannot reach.
  */
-async function findSendcloudShippingMethod({ carrier, toCountry, senderAddressId }) {
+const MARKETPLACE_METHOD_BY_CARRIER = {
+  DPD: "DPD Home",
+  UPS: "UPS Standard"
+};
+
+/*
+ * Sendcloud's own id for that service to that country.
+ *
+ * Asked rather than kept in a table. The Outbound Shipping Codes table holds
+ * one id for three countries and knows nothing about couriers, so it cannot
+ * express "DPD where DPD reaches" - and a table of ids is wrong the day
+ * Sendcloud renumbers a contract, silently, on the next label.
+ *
+ * Matched on the exact name, because the list is full of near misses: "UPS
+ * Standard 1-2kg", "UPS Standard - Signature" and "UPS® Standard" all read
+ * as UPS Standard to anything looser than this.
+ */
+async function findSendcloudShippingMethod({
+  carrier,
+  toCountry,
+  senderAddressId,
+  weightKg = Number(SENDCLOUD_MARKETPLACE_WEIGHT_KG)
+}) {
+  const wantedName = MARKETPLACE_METHOD_BY_CARRIER[carrier];
+
+  if (!wantedName) throw new Error(`No Sendcloud method configured for ${carrier}`);
+
   const params = new URLSearchParams({ to_country: asText(toCountry) });
 
   if (senderAddressId) params.set("sender_address", String(senderAddressId));
@@ -349,27 +381,39 @@ async function findSendcloudShippingMethod({ carrier, toCountry, senderAddressId
 
   const methods = Array.isArray(body?.shipping_methods) ? body.shipping_methods : [];
 
-  const priceFor = (method) => {
-    const row = (method.countries || []).find(
-      (country) => asText(country.iso_2).toUpperCase() === asText(toCountry).toUpperCase()
-    );
+  const wanted = asText(toCountry).toUpperCase();
 
-    return Number(row?.price);
-  };
+  const match = methods.find(
+    (method) =>
+      asText(method.name) === wantedName &&
+      asText(method.carrier).toLowerCase() === carrier.toLowerCase() &&
+      (method.countries || []).some(
+        (country) => asText(country.iso_2).toUpperCase() === wanted
+      )
+  );
 
-  const matching = methods
-    .filter((method) => asText(method.carrier).toLowerCase() === carrier.toLowerCase())
-    .filter((method) => Number.isFinite(priceFor(method)))
-    .sort((a, b) => priceFor(a) - priceFor(b));
-
-  if (!matching.length) {
+  if (!match) {
     throw new Error(
-      `No ${carrier} shipping method at Sendcloud for ${toCountry}` +
+      `Sendcloud does not offer "${wantedName}" to ${toCountry}` +
         (senderAddressId ? ` from sender address ${senderAddressId}` : "")
     );
   }
 
-  return { id: matching[0].id, name: asText(matching[0].name), price: priceFor(matching[0]) };
+  /*
+    A parcel outside the band would be refused at creation, and DPD Home
+    stops well before UPS Standard does.
+  */
+  if (
+    Number.isFinite(weightKg) &&
+    (weightKg < Number(match.min_weight) || weightKg > Number(match.max_weight))
+  ) {
+    throw new Error(
+      `"${wantedName}" carries ${match.min_weight}kg to ${match.max_weight}kg, ` +
+        `and this parcel is declared at ${weightKg}kg`
+    );
+  }
+
+  return { id: match.id, name: asText(match.name) };
 }
 
 function buildSendcloudOrderNumber(orderId, storeName, shopifyOrderNumber) {
@@ -399,11 +443,13 @@ async function createSendcloudLabel({
   orderId,
   storeName,
   shopifyOrderNumber,
-  senderAddressId = ""
+  senderAddressId = "",
+  weightKg = null
 }) {
   const payload = {
     parcel: {
-      // Left out for a store order, which keeps using the account default.
+      // Both left out for a store order, which keeps the account default
+      // sender and the weight this function has always sent.
       sender_address: senderAddressId ? Number(senderAddressId) : undefined,
       name: customerAddress.name,
       company_name: customerAddress.company || undefined,
@@ -420,7 +466,7 @@ async function createSendcloudLabel({
       },
       request_label: true,
       apply_shipping_rules: false,
-      weight: "0.5",
+      weight: weightKg ? String(weightKg) : "0.5",
       order_number: buildSendcloudOrderNumber(
         orderId,
         storeName,
@@ -3368,7 +3414,7 @@ async function createMarketplaceLabel({ orderRecord, orderFields, orderId }) {
 
   console.log(
     `${orderId}: consignor in ${sellerCountryCode || "?"} -> ${carrier} ` +
-      `"${method.name}" to ${customerAddress.country} at EUR ${method.price}`
+      `"${method.name}" (#${method.id}) to ${customerAddress.country}`
   );
 
   const sendcloud = await createSendcloudLabel({
@@ -3377,7 +3423,8 @@ async function createMarketplaceLabel({ orderRecord, orderFields, orderId }) {
     orderId,
     storeName: asText(orderFields["Marketplace"]) || asText(orderFields["Store Name"]),
     shopifyOrderNumber: asText(orderFields["Shopify Order Number"]),
-    senderAddressId: SENDCLOUD_MARKETPLACE_SENDER_ADDRESS_ID
+    senderAddressId: SENDCLOUD_MARKETPLACE_SENDER_ADDRESS_ID,
+    weightKg: SENDCLOUD_MARKETPLACE_WEIGHT_KG
   });
 
   const labelPdfBuffer = await fetchBuffer(sendcloud.labelUrl, {
