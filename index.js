@@ -3465,6 +3465,14 @@ async function createMarketplaceLabel({ orderRecord, orderFields, orderId, dry =
   await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).update(orderRecord.id, {
     "Fulfillment Status": "Requested Label",
     "Tracking Number": sendcloud.trackingNumber,
+    /*
+      Recorded because a marketplace has to be told who is carrying it, and
+      working it out again later gets it wrong in exactly the case the
+      fallback above exists for: DPD chosen on the consignor's country, UPS
+      actually used because DPD does not reach the shopper. Reported wrong,
+      bol shows the buyer a courier that never had the parcel.
+    */
+    "Shipping Carrier": carrier,
     "Shipping Label": [
       { url: uploadedPdfUrl, filename: `${sanitizeFileName(orderId)}.pdf` }
     ],
