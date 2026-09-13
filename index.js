@@ -37,6 +37,18 @@ const {
   SENDCLOUD_PUBLIC_KEY,
   SENDCLOUD_SECRET_KEY,
   SENDCLOUD_PARCELS_URL = "https://panel.sendcloud.sc/api/v2/parcels",
+  SENDCLOUD_SHIPPING_METHODS_URL = "https://panel.sendcloud.sc/api/v2/shipping_methods",
+  /*
+    The sender a marketplace label is made out to.
+
+    Always our Dutch address, whatever country the consignor ships from:
+    that is what the courier routing exists for, because DPD only accepts
+    these parcels abroad against a Dutch sender while UPS takes them from
+    anywhere. Its own id rather than the account default, so the name on a
+    bol parcel can read UNION Amsterdam without renaming every store label
+    and every return at the same time.
+  */
+  SENDCLOUD_MARKETPLACE_SENDER_ADDRESS_ID = "",
   R2_ACCOUNT_ID,
   R2_ACCESS_KEY_ID,
   R2_SECRET_ACCESS_KEY,
@@ -259,6 +271,107 @@ async function getOutboundShippingOptionCode(countryCode) {
   return shippingOptionCode;
 }
 
+/*
+ * The shopper's address, read off our own order instead of out of Shopify.
+ *
+ * A marketplace order has no Shopify order behind it to look anything up
+ * in, so bol's address travels on the record from the moment the sale is
+ * read. The street and the house number arrive as one line there, which is
+ * the one thing that has to be taken apart again: Sendcloud refuses a
+ * parcel without a house number of its own.
+ */
+function customerAddressFromOrderFields(orderFields) {
+  const line = asText(orderFields["Customer Address"]);
+
+  const { street, houseNumber } = splitStreetAndHouseNumber(line, "");
+
+  return {
+    name: asText(orderFields["Customer Name"]),
+    company: "",
+    address1: street || line,
+    houseNumber,
+    address2: "",
+    city: asText(orderFields["Customer City"]),
+    postalCode: asText(orderFields["Customer Zipcode"]),
+    country: asText(orderFields["Customer Country"]).toUpperCase(),
+    email: asText(orderFields["Customer Email"]),
+    phone: ""
+  };
+}
+
+/*
+ * Which courier carries this one, decided by where the consignor sits.
+ *
+ * Label Request Routing already answers this for a human, in a sentence.
+ * The same row answers it for us: a country that reads UPS/DPD can do both
+ * against our Dutch sender, and DPD is the cheaper of the two every time -
+ * so there the choice is made rather than offered. Everywhere else only UPS
+ * reaches, which is why those rows say so and why UPS is the fallback when
+ * a country has no row at all.
+ */
+async function pickMarketplaceCarrier(sellerCountryCode) {
+  const { preferredCourier } = await getPreferredCourierForCountryCode(
+    sellerCountryCode
+  );
+
+  return /dpd/i.test(asText(preferredCourier)) ? "DPD" : "UPS";
+}
+
+/*
+ * Sendcloud's own id for that courier to that country.
+ *
+ * Asked rather than kept in a table. The Outbound Shipping Codes table
+ * holds one id for three countries and knows nothing about couriers, so it
+ * cannot express "DPD where DPD reaches" - and a table of ids is wrong the
+ * day Sendcloud changes a contract, silently, on the next label.
+ *
+ * Cheapest of the ones that match, because several methods can carry the
+ * same parcel and the difference between them is the price.
+ */
+async function findSendcloudShippingMethod({ carrier, toCountry, senderAddressId }) {
+  const params = new URLSearchParams({ to_country: asText(toCountry) });
+
+  if (senderAddressId) params.set("sender_address", String(senderAddressId));
+
+  const res = await fetch(`${SENDCLOUD_SHIPPING_METHODS_URL}?${params}`, {
+    headers: {
+      Authorization: buildBasicAuthHeader(SENDCLOUD_PUBLIC_KEY, SENDCLOUD_SECRET_KEY)
+    }
+  });
+
+  const body = await res.json().catch(() => ({}));
+
+  if (!res.ok) {
+    throw new Error(
+      `Sendcloud shipping methods failed: ${res.status} ${JSON.stringify(body)}`
+    );
+  }
+
+  const methods = Array.isArray(body?.shipping_methods) ? body.shipping_methods : [];
+
+  const priceFor = (method) => {
+    const row = (method.countries || []).find(
+      (country) => asText(country.iso_2).toUpperCase() === asText(toCountry).toUpperCase()
+    );
+
+    return Number(row?.price);
+  };
+
+  const matching = methods
+    .filter((method) => asText(method.carrier).toLowerCase() === carrier.toLowerCase())
+    .filter((method) => Number.isFinite(priceFor(method)))
+    .sort((a, b) => priceFor(a) - priceFor(b));
+
+  if (!matching.length) {
+    throw new Error(
+      `No ${carrier} shipping method at Sendcloud for ${toCountry}` +
+        (senderAddressId ? ` from sender address ${senderAddressId}` : "")
+    );
+  }
+
+  return { id: matching[0].id, name: asText(matching[0].name), price: priceFor(matching[0]) };
+}
+
 function buildSendcloudOrderNumber(orderId, storeName, shopifyOrderNumber) {
   const cleanOrderId = asText(orderId)
     .replace(/\s+/g, "")
@@ -285,10 +398,13 @@ async function createSendcloudLabel({
   shippingOptionCode,
   orderId,
   storeName,
-  shopifyOrderNumber
+  shopifyOrderNumber,
+  senderAddressId = ""
 }) {
   const payload = {
     parcel: {
+      // Left out for a store order, which keeps using the account default.
+      sender_address: senderAddressId ? Number(senderAddressId) : undefined,
       name: customerAddress.name,
       company_name: customerAddress.company || undefined,
       address: customerAddress.address1,
@@ -3187,6 +3303,113 @@ app.post("/api/submit-outbound", async (req, res) => {
   }
 });
 
+/*
+ * A label for a marketplace sale, made by us.
+ *
+ * The three marketplaces differ in exactly one thing: who draws the label.
+ * SneakerAsk hands us one, Woovin books it on their own account, and bol
+ * does neither - their order is addressed to a private shopper and the
+ * parcel is ours to ship. So this is the only one of the three where we go
+ * to Sendcloud, and it is why it lives here rather than in the consignment
+ * service: the keys, the R2 bucket and the Discord delivery are all here
+ * already.
+ *
+ * The consignor never sees an address. He gets a finished label in his own
+ * channel, exactly as he does for a store order.
+ */
+async function createMarketplaceLabel({ orderRecord, orderFields, orderId }) {
+  const customerAddress = customerAddressFromOrderFields(orderFields);
+
+  if (!customerAddress.country) {
+    throw new Error(`Order ${orderId} has no customer country to ship to`);
+  }
+
+  if (!customerAddress.houseNumber) {
+    throw new Error(
+      `Customer address on ${orderId} has no detectable house number: ` +
+        `"${asText(orderFields["Customer Address"])}"`
+    );
+  }
+
+  const sellerCountryCode = await getSellerCountryCodeFromOrderFields(orderFields);
+  const carrier = await pickMarketplaceCarrier(sellerCountryCode);
+
+  const method = await findSendcloudShippingMethod({
+    carrier,
+    toCountry: customerAddress.country,
+    senderAddressId: SENDCLOUD_MARKETPLACE_SENDER_ADDRESS_ID
+  });
+
+  console.log(
+    `${orderId}: consignor in ${sellerCountryCode || "?"} -> ${carrier} ` +
+      `"${method.name}" to ${customerAddress.country} at EUR ${method.price}`
+  );
+
+  const sendcloud = await createSendcloudLabel({
+    customerAddress,
+    shippingOptionCode: method.id,
+    orderId,
+    storeName: asText(orderFields["Marketplace"]) || asText(orderFields["Store Name"]),
+    shopifyOrderNumber: asText(orderFields["Shopify Order Number"]),
+    senderAddressId: SENDCLOUD_MARKETPLACE_SENDER_ADDRESS_ID
+  });
+
+  const labelPdfBuffer = await fetchBuffer(sendcloud.labelUrl, {
+    Authorization: buildBasicAuthHeader(SENDCLOUD_PUBLIC_KEY, SENDCLOUD_SECRET_KEY)
+  });
+
+  const uploadedPdfUrl = await uploadPdfToR2({
+    key: `shipping-labels/${sanitizeFileName(orderId)}.pdf`,
+    pdfBuffer: labelPdfBuffer
+  });
+
+  await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).update(orderRecord.id, {
+    "Fulfillment Status": "Requested Label",
+    "Tracking Number": sendcloud.trackingNumber,
+    "Shipping Label": [
+      { url: uploadedPdfUrl, filename: `${sanitizeFileName(orderId)}.pdf` }
+    ],
+    "Label Error Message": null
+  });
+
+  /*
+    Delivered, not stored. A label nobody is told about is the same as no
+    label at all, and this is the step that went missing when bol orders
+    fell through to the store path.
+  */
+  const sellerRecord = await getSellerRecordFromLinkedSellerValue(
+    first(orderFields["Linked Seller ID"])
+  ).catch(() => null);
+
+  const labelsChannelId = asText(sellerRecord?.fields?.["Labels Channel ID"]);
+
+  const delivery = {
+    orderId,
+    trackingNumber: sendcloud.trackingNumber,
+    labelUrl: uploadedPdfUrl,
+    productName: asText(orderFields["Product Name"]),
+    sku: asText(orderFields["SKU (Soft)"]) || asText(orderFields["SKU"]),
+    size: asText(orderFields["Size"])
+  };
+
+  if (labelsChannelId) {
+    await sendFinalLabelToDiscordChannel({ channelId: labelsChannelId, ...delivery });
+  } else {
+    await sendFinalLabelToDiscordDM({
+      discordUserId: asText(sellerRecord?.fields?.["Discord ID"]),
+      ...delivery
+    });
+  }
+
+  return {
+    ok: true,
+    message: `Label created for ${orderId}`,
+    carrier,
+    method: method.name,
+    tracking_number: sendcloud.trackingNumber
+  };
+}
+
 app.post("/api/request-label", async (req, res) => {
   try {
     const source = asText(req.body?.source);
@@ -3200,7 +3423,7 @@ app.post("/api/request-label", async (req, res) => {
       return res.status(400).json({ error: "Missing record_id" });
     }
 
-    if (!["quick_deal", "wtb_deal"].includes(source)) {
+    if (!["quick_deal", "wtb_deal", "marketplace"].includes(source)) {
       return res.status(400).json({ error: "Unsupported source" });
     }
 
@@ -3217,6 +3440,29 @@ app.post("/api/request-label", async (req, res) => {
       return res.status(400).json({
         error: `A label already exists for ${orderId}`
       });
+    }
+
+    /*
+      Nothing below this line applies to a marketplace sale.
+
+      The rest of the route asks a store for a label, or makes one from the
+      store's own Shopify order. A bol sale has neither: no store to ask, no
+      Shopify order to read, and the shopper's address already on our record.
+
+      Decided on the order rather than on which button was pressed. A bol
+      sale can arrive here twice over: the consignor presses Request Label
+      on his own deal, or nobody took it, it became a quick deal and whoever
+      claimed it presses the button in that channel instead. Same parcel to
+      the same shopper either way, so trusting the caller's own word for it
+      would only mean the second route fails on a Shopify order that was
+      never there.
+    */
+    const isBolOrder = asText(orderFields["Marketplace"]).toLowerCase() === "bol";
+
+    if (source === "marketplace" || isBolOrder) {
+      return res
+        .status(200)
+        .json(await createMarketplaceLabel({ orderRecord, orderFields, orderId }));
     }
 
     const clientId = first(orderFields["Client"]);
