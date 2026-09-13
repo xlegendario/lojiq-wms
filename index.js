@@ -3363,7 +3363,7 @@ app.post("/api/submit-outbound", async (req, res) => {
  * The consignor never sees an address. He gets a finished label in his own
  * channel, exactly as he does for a store order.
  */
-async function createMarketplaceLabel({ orderRecord, orderFields, orderId }) {
+async function createMarketplaceLabel({ orderRecord, orderFields, orderId, dry = false }) {
   const customerAddress = customerAddressFromOrderFields(orderFields);
 
   if (!customerAddress.country) {
@@ -3416,6 +3416,32 @@ async function createMarketplaceLabel({ orderRecord, orderFields, orderId }) {
     `${orderId}: consignor in ${sellerCountryCode || "?"} -> ${carrier} ` +
       `"${method.name}" (#${method.id}) to ${customerAddress.country}`
   );
+
+  /*
+    Everything decided, nothing spent.
+
+    The two things that can only be answered by Sendcloud - does this method
+    exist on this lane, and will they take this address - are split by the
+    parcel call, and only the second one costs money. So a dry run answers
+    the first, shows exactly what the second would be handed, and stops. It
+    is also the only way to see whether the sender address is configured
+    without opening a finished label to read the name off it.
+  */
+  if (dry) {
+    return {
+      ok: true,
+      dry: true,
+      order: orderId,
+      consignorCountry: sellerCountryCode || null,
+      carrier,
+      method: `${method.name} (#${method.id})`,
+      senderAddressId: SENDCLOUD_MARKETPLACE_SENDER_ADDRESS_ID || "NOT SET - would use the account default",
+      weightKg: SENDCLOUD_MARKETPLACE_WEIGHT_KG,
+      shipTo: customerAddress,
+      wouldDeliverTo:
+        asText(orderFields["Claimed Channel ID"]) || "the consignor's own labels channel"
+    };
+  }
 
   const sendcloud = await createSendcloudLabel({
     customerAddress,
@@ -3543,9 +3569,14 @@ app.post("/api/request-label", async (req, res) => {
     const isBolOrder = asText(orderFields["Marketplace"]).toLowerCase() === "bol";
 
     if (source === "marketplace" || isBolOrder) {
-      return res
-        .status(200)
-        .json(await createMarketplaceLabel({ orderRecord, orderFields, orderId }));
+      return res.status(200).json(
+        await createMarketplaceLabel({
+          orderRecord,
+          orderFields,
+          orderId,
+          dry: req.body?.dry === true
+        })
+      );
     }
 
     const clientId = first(orderFields["Client"]);
