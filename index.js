@@ -3332,13 +3332,39 @@ async function createMarketplaceLabel({ orderRecord, orderFields, orderId }) {
   }
 
   const sellerCountryCode = await getSellerCountryCodeFromOrderFields(orderFields);
-  const carrier = await pickMarketplaceCarrier(sellerCountryCode);
 
-  const method = await findSendcloudShippingMethod({
+  /*
+    DPD where it reaches, UPS everywhere else, and UPS again if DPD turns
+    out not to serve this destination after all.
+
+    The routing table says which countries DPD can leave from against our
+    Dutch sender; it says nothing about where it can arrive. Rather than
+    refuse the label over that, the parcel goes UPS and the log says why.
+    A pair that ships a few euros dearer beats a pair that does not ship.
+  */
+  let carrier = await pickMarketplaceCarrier(sellerCountryCode);
+
+  let method = await findSendcloudShippingMethod({
     carrier,
     toCountry: customerAddress.country,
     senderAddressId: SENDCLOUD_MARKETPLACE_SENDER_ADDRESS_ID
+  }).catch((error) => {
+    if (carrier === "UPS") throw error;
+
+    console.warn(`${orderId}: no DPD to ${customerAddress.country}, falling back to UPS`);
+
+    carrier = "UPS";
+
+    return null;
   });
+
+  if (!method) {
+    method = await findSendcloudShippingMethod({
+      carrier,
+      toCountry: customerAddress.country,
+      senderAddressId: SENDCLOUD_MARKETPLACE_SENDER_ADDRESS_ID
+    });
+  }
 
   console.log(
     `${orderId}: consignor in ${sellerCountryCode || "?"} -> ${carrier} ` +
@@ -3376,12 +3402,22 @@ async function createMarketplaceLabel({ orderRecord, orderFields, orderId }) {
     Delivered, not stored. A label nobody is told about is the same as no
     label at all, and this is the step that went missing when bol orders
     fell through to the store path.
-  */
-  const sellerRecord = await getSellerRecordFromLinkedSellerValue(
-    first(orderFields["Linked Seller ID"])
-  ).catch(() => null);
 
-  const labelsChannelId = asText(sellerRecord?.fields?.["Labels Channel ID"]);
+    Whoever is actually shipping gets it, and that is not always the
+    consignor. A deal nobody took becomes a quick deal, and then the claimer
+    holds the pair and reads the deal channel - so that channel wins when it
+    exists, exactly as it does for a store order.
+  */
+  const claimedChannelId = asText(orderFields["Claimed Channel ID"]);
+
+  const sellerRecord = claimedChannelId
+    ? null
+    : await getSellerRecordFromLinkedSellerValue(
+        first(orderFields["Linked Seller ID"])
+      ).catch(() => null);
+
+  const channelId =
+    claimedChannelId || asText(sellerRecord?.fields?.["Labels Channel ID"]);
 
   const delivery = {
     orderId,
@@ -3392,8 +3428,8 @@ async function createMarketplaceLabel({ orderRecord, orderFields, orderId }) {
     size: asText(orderFields["Size"])
   };
 
-  if (labelsChannelId) {
-    await sendFinalLabelToDiscordChannel({ channelId: labelsChannelId, ...delivery });
+  if (channelId) {
+    await sendFinalLabelToDiscordChannel({ channelId, ...delivery });
   } else {
     await sendFinalLabelToDiscordDM({
       discordUserId: asText(sellerRecord?.fields?.["Discord ID"]),
