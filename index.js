@@ -57,6 +57,15 @@ const {
     the wrong band and re-weighed by the courier at their own price.
   */
   SENDCLOUD_MARKETPLACE_WEIGHT_KG = "1.5",
+  /*
+    The number a marketplace label carries when the shopper gave none.
+
+    bol hands over no phone number at all, and UPS refuses to announce a
+    parcel without one: the first bol pair shipped from outside the
+    Netherlands came back "Announcement failed" for exactly that. Ours, so a
+    courier who needs to call reaches someone who can act on it.
+  */
+  SENDCLOUD_MARKETPLACE_FALLBACK_PHONE = "+31634349800",
   R2_ACCOUNT_ID,
   R2_ACCESS_KEY_ID,
   R2_SECRET_ACCESS_KEY,
@@ -444,7 +453,8 @@ async function createSendcloudLabel({
   storeName,
   shopifyOrderNumber,
   senderAddressId = "",
-  weightKg = null
+  weightKg = null,
+  fallbackPhone = ""
 }) {
   const payload = {
     parcel: {
@@ -460,7 +470,7 @@ async function createSendcloudLabel({
       postal_code: customerAddress.postalCode,
       country: customerAddress.country,
       email: customerAddress.email || undefined,
-      telephone: customerAddress.phone || undefined,
+      telephone: customerAddress.phone || fallbackPhone || undefined,
       shipment: {
         id: Number(shippingOptionCode)
       },
@@ -3437,7 +3447,10 @@ async function createMarketplaceLabel({ orderRecord, orderFields, orderId, dry =
       method: `${method.name} (#${method.id})`,
       senderAddressId: SENDCLOUD_MARKETPLACE_SENDER_ADDRESS_ID || "NOT SET - would use the account default",
       weightKg: SENDCLOUD_MARKETPLACE_WEIGHT_KG,
-      shipTo: customerAddress,
+      shipTo: {
+        ...customerAddress,
+        phone: customerAddress.phone || SENDCLOUD_MARKETPLACE_FALLBACK_PHONE
+      },
       wouldDeliverTo:
         asText(orderFields["Claimed Channel ID"]) || "the consignor's own labels channel"
     };
@@ -3450,7 +3463,8 @@ async function createMarketplaceLabel({ orderRecord, orderFields, orderId, dry =
     storeName: asText(orderFields["Marketplace"]) || asText(orderFields["Store Name"]),
     shopifyOrderNumber: asText(orderFields["Shopify Order Number"]),
     senderAddressId: SENDCLOUD_MARKETPLACE_SENDER_ADDRESS_ID,
-    weightKg: SENDCLOUD_MARKETPLACE_WEIGHT_KG
+    weightKg: SENDCLOUD_MARKETPLACE_WEIGHT_KG,
+    fallbackPhone: SENDCLOUD_MARKETPLACE_FALLBACK_PHONE
   });
 
   const labelPdfBuffer = await fetchBuffer(sendcloud.labelUrl, {
