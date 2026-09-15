@@ -454,7 +454,8 @@ async function createSendcloudLabel({
   shopifyOrderNumber,
   senderAddressId = "",
   weightKg = null,
-  fallbackPhone = ""
+  fallbackPhone = "",
+  contractId = null
 }) {
   const payload = {
     parcel: {
@@ -476,6 +477,9 @@ async function createSendcloudLabel({
       },
       request_label: true,
       apply_shipping_rules: false,
+      // Only when asked for: which carrier contract pays, e.g. Sendcloud's
+      // own rates instead of ours while our UPS contract is blocked.
+      ...(contractId ? { contract: Number(contractId) } : {}),
       weight: weightKg ? String(weightKg) : "0.5",
       order_number: buildSendcloudOrderNumber(
         orderId,
@@ -3373,7 +3377,34 @@ app.post("/api/submit-outbound", async (req, res) => {
  * The consignor never sees an address. He gets a finished label in his own
  * channel, exactly as he does for a store order.
  */
-async function createMarketplaceLabel({ orderRecord, orderFields, orderId, dry = false }) {
+/*
+ * The carrier contracts on the Sendcloud account, for choosing one by hand.
+ *
+ * Read-only and only ever shown on a dry run: which contract a label is paid
+ * from is a decision, and seeing the ids is how it gets made.
+ */
+async function listSendcloudContracts(carrierCode) {
+  const res = await fetch("https://panel.sendcloud.sc/api/v2/contracts", {
+    headers: { Authorization: buildBasicAuthHeader(SENDCLOUD_PUBLIC_KEY, SENDCLOUD_SECRET_KEY) }
+  });
+
+  const body = await res.json().catch(() => ({}));
+
+  if (!res.ok) return { error: `${res.status} ${JSON.stringify(body).slice(0, 300)}` };
+
+  return (body.contracts || body.data || [])
+    .filter((c) => !carrierCode || asText(c?.carrier?.code || c?.carrier).toLowerCase() === carrierCode.toLowerCase())
+    .map((c) => ({
+      id: c.id,
+      carrier: c?.carrier?.code || c?.carrier || null,
+      name: c.name || c.client_id || null,
+      is_active: c.is_active ?? null,
+      is_default: c.is_default ?? null,
+      type: c.type || (c.is_sendcloud ? "sendcloud" : null)
+    }));
+}
+
+async function createMarketplaceLabel({ orderRecord, orderFields, orderId, dry = false, contractId = null }) {
   const customerAddress = customerAddressFromOrderFields(orderFields);
 
   if (!customerAddress.country) {
@@ -3451,6 +3482,8 @@ async function createMarketplaceLabel({ orderRecord, orderFields, orderId, dry =
         ...customerAddress,
         phone: customerAddress.phone || SENDCLOUD_MARKETPLACE_FALLBACK_PHONE
       },
+      contractId: contractId || "account default",
+      contracts: await listSendcloudContracts(carrier.toLowerCase()).catch((error) => ({ error: error.message })),
       wouldDeliverTo:
         asText(orderFields["Claimed Channel ID"]) || "the consignor's own labels channel"
     };
@@ -3464,7 +3497,8 @@ async function createMarketplaceLabel({ orderRecord, orderFields, orderId, dry =
     shopifyOrderNumber: asText(orderFields["Shopify Order Number"]),
     senderAddressId: SENDCLOUD_MARKETPLACE_SENDER_ADDRESS_ID,
     weightKg: SENDCLOUD_MARKETPLACE_WEIGHT_KG,
-    fallbackPhone: SENDCLOUD_MARKETPLACE_FALLBACK_PHONE
+    fallbackPhone: SENDCLOUD_MARKETPLACE_FALLBACK_PHONE,
+    contractId
   });
 
   const labelPdfBuffer = await fetchBuffer(sendcloud.labelUrl, {
@@ -3596,7 +3630,8 @@ app.post("/api/request-label", async (req, res) => {
           orderRecord,
           orderFields,
           orderId,
-          dry: req.body?.dry === true
+          dry: req.body?.dry === true,
+          contractId: /^\d+$/.test(asText(req.body?.contract_id)) ? asText(req.body.contract_id) : null
         })
       );
     }
