@@ -402,9 +402,17 @@ async function findSendcloudShippingMethod({
   );
 
   if (!match) {
+    // Names only change with the contract behind them, so say what IS on
+    // offer for this carrier: that is the whole answer to "what now".
+    const offered = methods
+      .filter((method) => asText(method.carrier).toLowerCase() === carrier.toLowerCase())
+      .filter((method) => (method.countries || []).some((country) => asText(country.iso_2).toUpperCase() === wanted))
+      .map((method) => `${method.name} (#${method.id})`);
+
     throw new Error(
       `Sendcloud does not offer "${wantedName}" to ${toCountry}` +
-        (senderAddressId ? ` from sender address ${senderAddressId}` : "")
+        (senderAddressId ? ` from sender address ${senderAddressId}` : "") +
+        `. ${carrier} methods on offer: ${offered.length ? offered.join(", ") : "none"}`
     );
   }
 
