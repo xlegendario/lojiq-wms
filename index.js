@@ -392,14 +392,40 @@ async function findSendcloudShippingMethod({
 
   const wanted = asText(toCountry).toUpperCase();
 
-  const match = methods.find(
-    (method) =>
-      asText(method.name) === wantedName &&
-      asText(method.carrier).toLowerCase() === carrier.toLowerCase() &&
-      (method.countries || []).some(
-        (country) => asText(country.iso_2).toUpperCase() === wanted
-      )
-  );
+  const onLane = (method) =>
+    asText(method.carrier).toLowerCase() === carrier.toLowerCase() &&
+    (method.countries || []).some(
+      (country) => asText(country.iso_2).toUpperCase() === wanted
+    );
+
+  /*
+    The plain name on our own contract, a weight band on Sendcloud's.
+
+    Our contract offers "UPS Standard" for any weight. With it switched off
+    (blocked by UPS in September 2026) the same service comes from Sendcloud
+    as "UPS Standard 1-2kg", "UPS Standard 2-3kg" and so on, so the plain
+    name finds nothing. The band that holds the declared weight is the same
+    service at Sendcloud's price - lower bound included, upper excluded, the
+    way their bands are cut.
+  */
+  const bandOf = (method) => {
+    const name = asText(method.name);
+    const prefix = `${wantedName} `;
+
+    if (!name.startsWith(prefix)) return null;
+
+    const found = /^(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)kg$/.exec(name.slice(prefix.length));
+
+    return found ? { from: Number(found[1]), to: Number(found[2]) } : null;
+  };
+
+  const match =
+    methods.find((method) => asText(method.name) === wantedName && onLane(method)) ||
+    methods.find((method) => {
+      const band = bandOf(method);
+
+      return band && onLane(method) && weightKg >= band.from && weightKg < band.to;
+    });
 
   if (!match) {
     // Names only change with the contract behind them, so say what IS on
