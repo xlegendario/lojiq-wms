@@ -1313,6 +1313,68 @@ async function markUnfulfilledOrderLabelError(recordId, errorMessage) {
   });
 }
 
+/*
+ * A label for a Lojiq store consignor goes through the Lojiq bot.
+ *
+ * A seller linked to a Merchant is a Lojiq store. Its labels channel lives in
+ * the Lojiq server, where this service's own bot has no access (ORD-024891:
+ * 403 Missing Access), and its footer said Kickz Caviar to a store that must
+ * never see that name. The Lojiq bot can post there, and the message says
+ * Lojiq. Needs COUNTER_OFFERS_SECRET on this service, the same value the
+ * portal and that bot use.
+ */
+const LOJIQ_BOT_URL = process.env.LOJIQ_BOT_URL || "https://airtable-discord-updates.onrender.com";
+
+function isStoreSellerRecord(sellerRecord) {
+  const merchants = sellerRecord?.fields?.["Merchants"];
+
+  return Array.isArray(merchants) && merchants.length > 0;
+}
+
+async function sendLabelToLojiqStoreChannel({ channelId, orderId, trackingNumber, labelUrl, productName, sku, size }) {
+  const secret = process.env.COUNTER_OFFERS_SECRET;
+
+  if (!secret) {
+    throw new Error("COUNTER_OFFERS_SECRET is not set on the WMS, so a store label cannot be posted through the Lojiq bot");
+  }
+
+  if (!asText(channelId)) {
+    throw new Error(`Store consignor has no Labels Channel ID for ${orderId}`);
+  }
+
+  const response = await fetch(`${LOJIQ_BOT_URL.replace(/\/$/, "")}/post-member-wtb-store-message`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-kc-secret": secret },
+    body: JSON.stringify({
+      channel_id: channelId,
+      content: "",
+      embeds: [
+        {
+          title: "📦 Shipping Label Ready",
+          color: 0x2F80ED,
+          description:
+            `**Product:** ${productName || "-"}\n` +
+            `**SKU:** ${sku || "-"}\n` +
+            `**Size:** ${size || "-"}\n\n` +
+            `**Order:** ${orderId}\n` +
+            `**Tracking:** ${trackingNumber || "-"}\n\n` +
+            `[📄 Download Label](${labelUrl})`,
+          footer: { text: "Lojiq" }
+        }
+      ],
+      components: []
+    })
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(`Lojiq bot refused the label for ${orderId}: ${data.error || response.status}`);
+  }
+
+  return true;
+}
+
 async function sendFinalLabelToDiscordChannel({
   channelId,
   orderId,
@@ -3591,7 +3653,9 @@ async function createMarketplaceLabel({ orderRecord, orderFields, orderId, dry =
     size: asText(orderFields["Size"])
   };
 
-  if (channelId) {
+  if (!claimedChannelId && isStoreSellerRecord(sellerRecord)) {
+    await sendLabelToLojiqStoreChannel({ channelId, ...delivery });
+  } else if (channelId) {
     await sendFinalLabelToDiscordChannel({ channelId, ...delivery });
   } else {
     await sendFinalLabelToDiscordDM({
@@ -3835,6 +3899,7 @@ app.post("/send-label-to-channel", async (req, res) => {
     let targetChannelId = claimedChannelId || wtbChannelId;
     let markLabelOk = true;
     let sellerDiscordId = "";
+    let storeSeller = false;
     
     if (!targetChannelId) {
       const linkedInventoryUnitIds = Array.isArray(fields["Linked Inventory Unit"])
@@ -3857,6 +3922,7 @@ app.post("/send-label-to-channel", async (req, res) => {
       }
     
       const sellerRecord = await airtable(AIRTABLE_SELLERS_TABLE).find(sellerRecordId);
+      storeSeller = isStoreSellerRecord(sellerRecord);
       targetChannelId = asText(sellerRecord.fields["Labels Channel ID"]);
       sellerDiscordId = asText(sellerRecord.fields["Discord ID"]);
       markLabelOk = false;
@@ -3882,7 +3948,17 @@ app.post("/send-label-to-channel", async (req, res) => {
     }
 
     // 👇 gebruik je bestaande functie
-    if (targetChannelId) {
+    if (storeSeller) {
+      await sendLabelToLojiqStoreChannel({
+        channelId: targetChannelId,
+        orderId: asText(fields["Order ID"]) || record.id,
+        trackingNumber,
+        labelUrl,
+        productName: asText(fields["Product Name"]),
+        sku: asText(fields["SKU"]),
+        size: asText(fields["Size"])
+      });
+    } else if (targetChannelId) {
       await sendFinalLabelToDiscordChannel({
         channelId: targetChannelId,
         orderId: asText(fields["Order ID"]) || record.id,
