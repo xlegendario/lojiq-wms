@@ -283,6 +283,44 @@
       color: var(--primary-soft);
     }
 
+    .product {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 200px;
+      max-width: 280px;
+    }
+
+    .product img {
+      width: 48px;
+      height: 34px;
+      object-fit: contain;
+      background: #FFFFFF;
+      border-radius: 6px;
+      flex-shrink: 0;
+    }
+
+    .product-name {
+      font-size: 13px;
+      line-height: 1.3;
+    }
+
+    .product-status {
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .product-status.warn,
+    .product-alt {
+      color: #F5B544;
+    }
+
+    .product-alt {
+      display: block;
+      font-size: 12px;
+      margin-top: 2px;
+    }
+
     .empty {
       text-align: center;
       color: var(--muted);
@@ -602,6 +640,7 @@
             <thead>
               <tr>
                 <th>Product GTIN</th>
+                <th>Product</th>
                 <th>SKU</th>
                 <th>Size</th>
                 <th>Quantity</th>
@@ -610,7 +649,7 @@
             </thead>
             <tbody id="itemsTableBody">
               <tr>
-                <td colspan="5" class="empty">No items scanned yet</td>
+                <td colspan="6" class="empty">No items scanned yet</td>
               </tr>
             </tbody>
           </table>
@@ -909,7 +948,7 @@
       if (items.length === 0) {
         itemsTableBody.innerHTML = `
           <tr>
-            <td colspan="5" class="empty">No items scanned yet</td>
+            <td colspan="6" class="empty">No items scanned yet</td>
           </tr>
         `;
         updateStatusPanel();
@@ -919,6 +958,7 @@
       itemsTableBody.innerHTML = items.map((item, index) => `
         <tr>
           <td>${escapeHtml(item.gtin || "—")}</td>
+          <td data-product-cell>${productCellHtml(item)}</td>
           <td>
             <input
               value="${escapeHtml(item.sku)}"
@@ -963,6 +1003,116 @@
       updateStatusPanel();
     }
 
+    /*
+     * What the Product column says for a row.
+     *
+     * The barcode lookup and the name lookup are two steps, and each can be
+     * pending, empty or broken. They are spelled out, because "unknown" means
+     * type it in and "lookup failed" means scan it again.
+     */
+    function productCellHtml(item) {
+      if (item.lookup === "searching") {
+        return `<span class="product-status">Looking up barcode…</span>`;
+      }
+
+      if (item.lookup === "failed" && !item.sku.trim()) {
+        return `<span class="product-status warn">Lookup failed, scan again</span>`;
+      }
+
+      if (item.lookup === "unknown" && !item.sku.trim()) {
+        return `<span class="product-status warn">Unknown barcode, fill in SKU and size</span>`;
+      }
+
+      if (item.info === "loading") {
+        return `<span class="product-status">Loading product…</span>`;
+      }
+
+      const alternatives = (item.alternatives || []).length
+        ? `<span class="product-alt">Also listed as ${escapeHtml(
+            item.alternatives.map((alt) => `${alt.sku} / ${alt.size}`).join(", ")
+          )}</span>`
+        : "";
+
+      if (item.productName) {
+        const picture = item.image
+          ? `<img src="${escapeHtml(item.image)}" alt="" loading="lazy" />`
+          : "";
+
+        return `<div class="product">${picture}<span class="product-name">${escapeHtml(item.productName)}${alternatives}</span></div>`;
+      }
+
+      if (item.info === "not_found") {
+        return `<span class="product-status warn">SKU not recognised, check it</span>`;
+      }
+
+      if (item.info === "failed") {
+        return `<span class="product-status warn">Could not load product</span>`;
+      }
+
+      return `<span class="product-status">—</span>`;
+    }
+
+    // Only the Product cell, so a name arriving never throws away what
+    // someone is typing in the SKU or size field of another row.
+    function refreshProductCell(item) {
+      const index = items.indexOf(item);
+      if (index < 0) return;
+
+      const cell = itemsTableBody
+        .querySelectorAll("tr")[index]
+        ?.querySelector("[data-product-cell]");
+
+      if (cell) cell.innerHTML = productCellHtml(item);
+    }
+
+    async function loadProductInfo(item, { learn = false } = {}) {
+      const sku = item.sku.trim().toUpperCase();
+
+      if (!sku) {
+        item.infoSku = "";
+        item.info = "";
+        item.productName = "";
+        item.image = "";
+        refreshProductCell(item);
+        return;
+      }
+
+      // Already asked for this exact SKU.
+      if (item.infoSku === sku && item.info !== "failed") return;
+
+      item.infoSku = sku;
+      item.info = "loading";
+      refreshProductCell(item);
+
+      try {
+        const response = await fetch("/api/product-info", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sku, learn })
+        });
+
+        const data = await response.json();
+
+        // The SKU was changed while this was on its way.
+        if (item.infoSku !== sku) return;
+
+        if (data.ok) {
+          item.info = "ok";
+          item.productName = data.product_name || "";
+          item.image = data.image || "";
+        } else {
+          item.info = data.reason === "lookup_failed" ? "failed" : "not_found";
+          item.productName = "";
+          item.image = "";
+        }
+      } catch (_error) {
+        if (item.infoSku !== sku) return;
+        item.info = "failed";
+      }
+
+      refreshProductCell(item);
+    }
+
     async function lookupProduct(gtin) {
       const response = await fetch("/api/lookup-product", {
         method: "POST",
@@ -994,6 +1144,11 @@
         renderTable();
         showToast(`Scanned again: ${cleanCode}. Quantity updated.`, "success", "Success");
         focusScanner();
+
+        // A lookup that broke earlier gets another go on the next scan.
+        if (existingItem.lookup === "failed" && !existingItem.sku.trim()) {
+          await runBarcodeLookup(existingItem);
+        }
         return;
       }
 
@@ -1006,27 +1161,59 @@
 
       items.push(newItem);
       renderTable();
+      focusScanner();
+
+      await runBarcodeLookup(newItem);
+    }
+
+    async function runBarcodeLookup(item) {
+      const code = item.gtin;
+
+      item.lookup = "searching";
+      refreshProductCell(item);
 
       try {
-        const lookup = await lookupProduct(cleanCode);
+        const lookup = await lookupProduct(code);
 
         if (lookup.found) {
-          newItem.sku = lookup.sku || "";
-          newItem.size = lookup.size || "";
-          renderTable();
-          showToast(`GTIN ${cleanCode} matched successfully.`, "success", "Success");
-        } else {
+          item.lookup = "found";
+          item.alternatives = lookup.alternatives || [];
+
+          // Typed in by hand while the lookup ran: that wins.
+          const typed = Boolean(item.sku.trim() || item.size.trim());
+
+          if (!typed) {
+            item.sku = lookup.sku || "";
+            item.size = lookup.size || "";
+            renderTable();
+          } else {
+            refreshProductCell(item);
+          }
+
+          showToast(`${code} is ${lookup.sku} / ${lookup.size}.`, "success", "Success");
+          await loadProductInfo(item);
+        } else if (lookup.reason === "lookup_failed") {
+          item.lookup = "failed";
+          refreshProductCell(item);
           showToast(
-            `GTIN ${cleanCode} was not found. Please fill SKU and Size manually.`,
+            `Could not look up ${code} right now. Scan it again, or fill SKU and Size manually.`,
+            "error",
+            "Error"
+          );
+        } else {
+          item.lookup = "unknown";
+          refreshProductCell(item);
+          showToast(
+            `${code} is not a known barcode. Please fill SKU and Size manually.`,
             "warning",
             "Warning"
           );
         }
       } catch (error) {
+        item.lookup = "failed";
+        refreshProductCell(item);
         showToast(`Lookup error: ${error.message}`, "error", "Error");
       }
-
-      focusScanner();
     }
 
     function handleManualAdd() {
@@ -1053,13 +1240,18 @@
         existingItem.quantity += 1;
         renderTable();
       } else {
-        items.push({
+        const manualItem = {
           gtin: "",
           sku,
           size,
           quantity: 1
-        });
+        };
+
+        items.push(manualItem);
         renderTable();
+
+        // Typed in by hand, so the barcodes of this SKU are learned as well.
+        loadProductInfo(manualItem, { learn: true });
       }
 
       manualSkuInput.value = "";
@@ -1427,6 +1619,16 @@
     
         updateStatusPanel();
       }
+    });
+
+    // A SKU typed or corrected by hand gets its name and picture once the
+    // field is left.
+    itemsTableBody.addEventListener("change", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLInputElement) || target.dataset.field !== "sku") return;
+
+      const item = items[Number(target.dataset.index)];
+      if (item) loadProductInfo(item, { learn: true });
     });
 
     itemsTableBody.addEventListener("click", (event) => {

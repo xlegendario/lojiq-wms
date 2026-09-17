@@ -652,26 +652,53 @@ async function findMainBuyerRecordByBuyerId(buyerIdValue) {
   return records[0] || null;
 }
 
-async function findStockLevelByGTIN(gtin) {
-  const safeCode = escapeFormulaValue(gtin);
+/*
+ * Every way a scanned barcode can be stored.
+ *
+ * A UPC-A is an EAN-13 with a leading zero: 197600040076 and 0197600040076
+ * are the same box, and a scanner hands back whichever length the symbol
+ * encodes. Looking up only the scanned form found half the stock. Anything
+ * that is not a plain barcode is matched exactly as scanned.
+ */
+function barcodeForms(value) {
+  const code = asText(value).replace(/\s+/g, "");
 
-  const records = await airtable(AIRTABLE_STOCK_LEVELS_TABLE)
-    .select({
-      filterByFormula: `TRIM({Product GTIN} & '') = '${safeCode}'`,
-      maxRecords: 1
-    })
-    .firstPage();
+  if (!/^\d{8,14}$/.test(code)) return code ? [code] : [];
 
-  return records[0] || null;
+  const forms = new Set([code]);
+  const stripped = code.replace(/^0+/, "");
+
+  if (code.length > 8 && stripped) {
+    for (const length of [12, 13, 14]) {
+      if (stripped.length <= length) forms.add(stripped.padStart(length, "0"));
+    }
+  }
+
+  return [...forms];
 }
 
-async function findIncomingStockByGTIN(gtin) {
-  const safeCode = escapeFormulaValue(gtin);
+function barcodeFormula(fieldNames, code) {
+  const checks = [];
 
-  const records = await airtable(AIRTABLE_INCOMING_STOCK_TABLE)
+  for (const field of fieldNames) {
+    for (const form of barcodeForms(code)) {
+      checks.push(`TRIM({${field}} & '') = '${escapeFormulaValue(form)}'`);
+    }
+  }
+
+  return checks.length ? `OR(${checks.join(", ")})` : "FALSE()";
+}
+
+/*
+ * Stock Levels has the barcode in two fields: Product GTIN, and Product EAN
+ * for the European boxes. Only the first was ever read, which is why most
+ * EAN-13 scans found nothing.
+ */
+async function findStockLevelByGTIN(gtin) {
+  const records = await airtable(AIRTABLE_STOCK_LEVELS_TABLE)
     .select({
       filterByFormula: `AND(
-        TRIM({Product GTIN} & '') = '${safeCode}',
+        ${barcodeFormula(["Product GTIN", "Product EAN"], gtin)},
         TRIM({SKU} & '') != '',
         TRIM({Size} & '') != ''
       )`,
@@ -680,6 +707,48 @@ async function findIncomingStockByGTIN(gtin) {
     .firstPage();
 
   return records[0] || null;
+}
+
+async function findIncomingStockByGTIN(gtin) {
+  const records = await airtable(AIRTABLE_INCOMING_STOCK_TABLE)
+    .select({
+      filterByFormula: `AND(
+        ${barcodeFormula(["Product GTIN"], gtin)},
+        TRIM({SKU} & '') != '',
+        TRIM({Size} & '') != ''
+      )`,
+      maxRecords: 1
+    })
+    .firstPage();
+
+  return records[0] || null;
+}
+
+/*
+ * The portal knows what the WMS does not: bol_barcodes, SKU Master and the
+ * StockX catalog. Same secret as the Lojiq bot call below.
+ */
+async function callPortal(pathName, body, { timeoutMs = 20000 } = {}) {
+  const secret = process.env.COUNTER_OFFERS_SECRET;
+
+  if (!secret) {
+    throw new Error("COUNTER_OFFERS_SECRET is not set on the WMS");
+  }
+
+  const response = await fetch(`${KICKZ_PORTAL_BASE_URL.replace(/\/$/, "")}${pathName}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-kc-secret": secret },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(timeoutMs)
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok && !data?.reason) {
+    throw new Error(`Portal ${pathName} failed: ${data.details || data.error || response.status}`);
+  }
+
+  return data;
 }
 
 const MANUAL_STOCK_SELLER_CODES = [
@@ -2120,34 +2189,72 @@ app.post("/api/lookup-product", async (req, res) => {
       return res.status(400).json({ error: "Missing gtin" });
     }
 
-    // 1. First search Incoming Stock
-    let record = await findIncomingStockByGTIN(gtin);
-    let source = "incoming_stock";
+    const isBarcode = /^\d{8,14}$/.test(gtin.replace(/\s+/g, ""));
 
-    // 2. Fallback to Stock Levels
-    if (!record) {
-      record = await findStockLevelByGTIN(gtin);
-      source = "stock_levels";
-    }
+    /*
+     * Cheapest first, all at once: the barcode table in Supabase, then Stock
+     * Levels, then earlier intake. Only when none of them knows the box is
+     * StockX asked, because that is the one call that takes a second.
+     *
+     * A failure of the quick portal check is not fatal - Airtable may still
+     * know the barcode, and StockX gets its own try below.
+     */
+    const [catalog, stockLevel, incoming] = await Promise.all([
+      isBarcode
+        ? callPortal("/api/internal/lookup-barcode", { barcode: gtin, stockx: false }, { timeoutMs: 8000 })
+            .catch((err) => {
+              console.error("lookup-product: quick portal check failed:", err.message);
+              return null;
+            })
+        : null,
+      findStockLevelByGTIN(gtin),
+      findIncomingStockByGTIN(gtin)
+    ]);
 
-    if (!record) {
-      return res.status(200).json({
-        found: false,
-        gtin,
-        sku: "",
-        size: "",
-        source: null
+    const answer = (sku, size, source, extra = {}) =>
+      res.status(200).json({ found: true, gtin, sku: asText(sku), size: asText(size), source, ...extra });
+
+    if (catalog?.found) {
+      return answer(catalog.sku, catalog.size, "bol_barcodes", {
+        alternatives: catalog.alternatives || []
       });
     }
 
-    const fields = record.fields || {};
+    if (stockLevel) {
+      return answer(stockLevel.fields?.["SKU"], stockLevel.fields?.["Size"], "stock_levels");
+    }
+
+    if (incoming) {
+      return answer(incoming.fields?.["SKU"], incoming.fields?.["Size"], "incoming_stock");
+    }
+
+    let reason = "not_found";
+
+    if (isBarcode) {
+      try {
+        const fromStockx = await callPortal("/api/internal/lookup-barcode", { barcode: gtin });
+
+        if (fromStockx.found) {
+          return answer(fromStockx.sku, fromStockx.size, fromStockx.source || "stockx", {
+            alternatives: fromStockx.alternatives || []
+          });
+        }
+
+        reason = fromStockx.reason || "not_found";
+      } catch (err) {
+        console.error("lookup-product: StockX lookup failed:", err.message);
+        reason = "lookup_failed";
+      }
+    }
 
     return res.status(200).json({
-      found: true,
+      found: false,
       gtin,
-      sku: asText(fields["SKU"]),
-      size: asText(fields["Size"]),
-      source
+      sku: "",
+      size: "",
+      source: null,
+      // "lookup_failed" means try again; "not_found" means type it in.
+      reason: reason === "lookup_failed" ? "lookup_failed" : "not_found"
     });
   } catch (error) {
     console.error("lookup-product failed:", error);
@@ -2155,6 +2262,40 @@ app.post("/api/lookup-product", async (req, res) => {
       error: "Failed to lookup product",
       details: error.message
     });
+  }
+});
+
+/*
+ * Name and picture for a SKU, so the person scanning sees whether the box in
+ * hand is the shoe on screen.
+ *
+ * Goes through the portal's resolver: SKU Master first, StockX on an exact
+ * match only, and a SKU Master record is created for a code that did not
+ * have one yet. `learn` is for a SKU typed in by hand - every size of it is
+ * then stored with its barcodes, so the next box of that SKU just scans.
+ */
+app.post("/api/product-info", async (req, res) => {
+  const sku = asText(req.body?.sku).toUpperCase();
+
+  if (!sku) {
+    return res.status(400).json({ error: "Missing sku" });
+  }
+
+  if (req.body?.learn) {
+    callPortal("/api/internal/learn-barcodes", { sku }).catch((err) =>
+      console.error("learn-barcodes failed:", { sku, error: err.message })
+    );
+  }
+
+  try {
+    const data = await callPortal("/api/internal/resolve-sku", { sku });
+    const result = data?.results?.[sku] || { ok: false, reason: "not_found" };
+
+    return res.status(200).json({ sku, ...result });
+  } catch (error) {
+    console.error("product-info failed:", { sku, error: error.message });
+
+    return res.status(200).json({ sku, ok: false, reason: "lookup_failed" });
   }
 });
 
