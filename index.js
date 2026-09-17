@@ -605,6 +605,80 @@ async function updateInventoryUnitsToReserved(recordIds) {
   }
 }
 
+/*
+ * A Forwarding unit for every partner pair that leaves.
+ *
+ * The same shape Make 8.2 gave a forwarded pair at intake, made at the moment
+ * it is sent on instead: no prices, Verified, and straight to Forward Pending
+ * because the outbound that takes it is being made right now.
+ */
+async function createForwardingUnitsForPartnerPairs(pairs, sellerRecordId) {
+  const today = new Date().toISOString().split("T")[0];
+  const made = [];
+
+  for (let i = 0; i < pairs.length; i += 10) {
+    const batch = pairs.slice(i, i + 10);
+
+    const records = await airtable(AIRTABLE_INVENTORY_UNITS_TABLE).create(
+      batch.map((pair) => {
+        const fields = {
+          "Product Name": asText(pair.product_name),
+          "SKU": asText(pair.sku),
+          "Size": asText(pair.size),
+          "Brand": asText(pair.brand),
+          "VAT Type": asText(pair.vat_type) || "Margin",
+          "Seller ID": [sellerRecordId],
+          "Ticket Number": asText(pair.tracking_number) || asText(pair.id),
+          "Type": "Forwarding",
+          "Source": "Regular",
+          "Verification Status": "Verified",
+          "Availability Status": "Forward Pending",
+          "Purchase Date": today
+        };
+
+        if (asText(pair.barcode)) fields["Product GTIN"] = asText(pair.barcode);
+
+        return { fields };
+      })
+    );
+
+    records.forEach((record, index) => {
+      made.push({ pairId: batch[index].id, unitId: record.id });
+    });
+  }
+
+  return made;
+}
+
+// Same, but a failure half way deactivates what was already made.
+async function createForwardingUnitsForPartnerPairsOrUndo(pairs, sellerRecordId) {
+  const made = [];
+
+  try {
+    for (let i = 0; i < pairs.length; i += 10) {
+      made.push(...(await createForwardingUnitsForPartnerPairs(pairs.slice(i, i + 10), sellerRecordId)));
+    }
+
+    return made;
+  } catch (err) {
+    await deactivateInventoryUnits(made.map((unit) => unit.unitId)).catch((undoErr) =>
+      console.error("Partner forwarding units NOT deactivated:", undoErr.message)
+    );
+
+    throw err;
+  }
+}
+
+async function deactivateInventoryUnits(recordIds) {
+  const ids = [...new Set((recordIds || []).filter(Boolean))];
+
+  for (let i = 0; i < ids.length; i += 10) {
+    await airtable(AIRTABLE_INVENTORY_UNITS_TABLE).update(
+      ids.slice(i, i + 10).map((id) => ({ id, fields: { "Availability Status": "Inactive" } }))
+    );
+  }
+}
+
 async function getAverageForwardingFeeForSellerIds(sellerIds) {
   const uniqueSellerIds = [...new Set((sellerIds || []).filter(Boolean))];
   if (!uniqueSellerIds.length) return 0;
@@ -744,11 +818,65 @@ async function callPortal(pathName, body, { timeoutMs = 20000 } = {}) {
 
   const data = await response.json().catch(() => ({}));
 
-  if (!response.ok && !data?.reason) {
+  // A refusal with reasons (a barcode lookup's `reason`, a partner-stock
+  // call's `errors`) is an answer for the caller, not a failure.
+  if (!response.ok && !data?.reason && !Array.isArray(data?.errors)) {
     throw new Error(`Portal ${pathName} failed: ${data.details || data.error || response.status}`);
   }
 
-  return data;
+  return { ...data, httpStatus: response.status };
+}
+
+/*
+ * Partner pairs a forward can take, merged into a Create Outbound lookup.
+ *
+ * A partner's pairs live in Supabase until they leave, so the Ready to
+ * Forward units in Airtable are no longer the whole shelf. The pairs travel
+ * through the page as "ps:<id>" next to real record ids, and only become
+ * Inventory Units when the outbound is submitted. Units that were already in
+ * Airtable before the switch still come along as they always did.
+ */
+const PARTNER_PAIR_PREFIX = "ps:";
+
+async function partnerForwardableLookup({ sellerRecordId, barcode = "", sku = "", size = "" }) {
+  const data = await callPortal(
+    "/api/internal/partner-stock/forwardable",
+    { seller_record_id: sellerRecordId, barcode, sku, size },
+    { timeoutMs: 15000 }
+  );
+
+  if (!data?.ok) {
+    throw new Error((data?.errors || []).join("; ") || "Partner stock lookup failed");
+  }
+
+  return data.is_partner ? data : null;
+}
+
+function mergePartnerPairs({ partner, records, fallback }) {
+  const pairs = partner?.pairs || [];
+
+  if (!pairs.length) return null;
+
+  const first = records[0]?.fields || {};
+  const fee = Number(partner.forwarding_fee) || 0;
+  const available = records.length + pairs.length;
+
+  return {
+    found: true,
+    gtin: fallback.gtin || asText(first["Product GTIN"]) || asText(pairs[0].barcode),
+    product_name: asText(first["Product Name"]) || asText(pairs[0].product_name),
+    sku: asText(first["SKU"]) || pairs[0].sku,
+    size: asText(first["Size"]) || pairs[0].size,
+    available_quantity: available,
+    unit_price: fee,
+    total_available_price: fee * available,
+    inventory_unit_ids: [
+      ...records.map((record) => record.id),
+      ...pairs.map((pair) => `${PARTNER_PAIR_PREFIX}${pair.id}`)
+    ],
+    seller_ids: [fallback.sellerId],
+    unit_forwarding_fee: fee
+  };
 }
 
 const MANUAL_STOCK_SELLER_CODES = [
@@ -2299,6 +2427,259 @@ app.post("/api/product-info", async (req, res) => {
   }
 });
 
+/*
+ * Partners: sellers who keep pairs in our warehouse.
+ *
+ * Marked by a Default VAT Type on Sellers Database - the field exists only
+ * for this, and it is also the VAT type their pairs get at intake.
+ */
+async function getPartnerOptions() {
+  const records = await airtable(AIRTABLE_SELLERS_TABLE)
+    .select({
+      fields: ["Full Name", "Seller ID", "Default VAT Type", "Forwarding Fee"],
+      filterByFormula: `NOT({Default VAT Type} = BLANK())`,
+      sort: [{ field: "Full Name", direction: "asc" }]
+    })
+    .all();
+
+  return records
+    .map((record) => ({
+      id: record.id,
+      label: asText(record.fields["Full Name"]) || asText(record.fields["Seller ID"]),
+      seller_id: asText(record.fields["Seller ID"]),
+      vat_type: asText(record.fields["Default VAT Type"]),
+      forwarding_fee: Number(record.fields["Forwarding Fee"]) || 0
+    }))
+    .filter((option) => option.seller_id);
+}
+
+app.get("/api/partners", async (_req, res) => {
+  try {
+    return res.status(200).json({ ok: true, partners: await getPartnerOptions() });
+  } catch (error) {
+    console.error("partners failed:", error);
+    return res.status(500).json({ error: "Failed to load partners", details: error.message });
+  }
+});
+
+// Pass a partner-stock refusal through with its own status and reasons.
+function sendPortalAnswer(res, data, fallbackError) {
+  if (data?.ok) return res.status(200).json(data);
+
+  return res.status(data?.httpStatus && data.httpStatus >= 400 ? data.httpStatus : 500).json({
+    ok: false,
+    errors: Array.isArray(data?.errors) && data.errors.length ? data.errors : [fallbackError]
+  });
+}
+
+const PARTNER_INTAKE_MODES = {
+  Consignment: "consignment",
+  Forwarding: "forwarding",
+  Both: "both"
+};
+
+/*
+ * A partner parcel: every pair into Supabase partner_stock, nothing into
+ * Incoming Stock or Inventory Units. Listed pairs are on consignment within
+ * one sync round; a unit only appears when a pair sells or is sent on.
+ *
+ * The parcel's placeholder row in Incoming Stock, made when the parcel was
+ * received, is still marked Verified, so that log keeps showing which parcels
+ * were checked. It carries no SKU, so nothing downstream acts on it.
+ */
+app.post("/api/submit-partner-intake", async (req, res) => {
+  try {
+    const trackingNumber = asText(req.body?.tracking_number);
+    const mode = PARTNER_INTAKE_MODES[asText(req.body?.type)];
+    const sellerRecordId = asText(req.body?.seller_record_id);
+    const items = Array.isArray(req.body?.items) ? req.body.items : [];
+
+    if (!trackingNumber) return res.status(400).json({ ok: false, errors: ["Missing tracking number"] });
+    if (!mode) return res.status(400).json({ ok: false, errors: ["Pick Consignment, Forwarding or both"] });
+    if (!sellerRecordId) return res.status(400).json({ ok: false, errors: ["Pick the partner"] });
+
+    const data = await callPortal(
+      "/api/internal/partner-stock/intake",
+      {
+        seller_record_id: sellerRecordId,
+        mode,
+        tracking_number: trackingNumber,
+        append: Boolean(req.body?.append),
+        items: items.map((item) => ({
+          barcode: asText(item.gtin),
+          sku: asText(item.sku),
+          size: asText(item.size),
+          quantity: Number(item.quantity),
+          partner_price: item.partner_price,
+          markup: item.markup
+        }))
+      },
+      { timeoutMs: 60000 }
+    );
+
+    if (!data?.ok) return sendPortalAnswer(res, data, "Intake failed");
+
+    try {
+      const placeholders = await airtable(AIRTABLE_INCOMING_STOCK_TABLE)
+        .select({
+          filterByFormula: `AND(
+            TRIM({Tracking Number} & '') = '${escapeFormulaValue(trackingNumber)}',
+            TRIM({SKU} & '') = ''
+          )`,
+          maxRecords: 1
+        })
+        .firstPage();
+
+      if (placeholders[0]) {
+        await airtable(AIRTABLE_INCOMING_STOCK_TABLE).update(placeholders[0].id, {
+          "Status": "Verified",
+          "Verified At": new Date().toISOString(),
+          "Supplier": [sellerRecordId]
+        });
+      }
+    } catch (logError) {
+      // The pairs are in; a parcel log that did not update is not worth
+      // failing the intake over.
+      console.error("submit-partner-intake: parcel log not updated:", logError.message);
+    }
+
+    return res.status(200).json(data);
+  } catch (error) {
+    console.error("submit-partner-intake failed:", error);
+    return res.status(500).json({ ok: false, errors: ["Intake failed"], details: error.message });
+  }
+});
+
+app.get("/api/partner-stock", async (req, res) => {
+  try {
+    const statuses = asText(req.query?.statuses || "in_stock")
+      .split(",")
+      .map((status) => status.trim())
+      .filter(Boolean);
+
+    const data = await callPortal("/api/internal/partner-stock/list", {
+      seller_record_id: asText(req.query?.seller_record_id),
+      statuses,
+      sku: asText(req.query?.sku)
+    }, { timeoutMs: 60000 });
+
+    return sendPortalAnswer(res, data, "Could not load partner stock");
+  } catch (error) {
+    console.error("partner-stock list failed:", error);
+    return res.status(500).json({ ok: false, errors: ["Could not load partner stock"], details: error.message });
+  }
+});
+
+app.post("/api/partner-stock/update", async (req, res) => {
+  try {
+    const data = await callPortal("/api/internal/partner-stock/update", {
+      seller_record_id: asText(req.body?.seller_record_id),
+      ids: Array.isArray(req.body?.ids) ? req.body.ids : [],
+      changes: req.body?.changes || {}
+    }, { timeoutMs: 60000 });
+
+    return sendPortalAnswer(res, data, "Update failed");
+  } catch (error) {
+    console.error("partner-stock update failed:", error);
+    return res.status(500).json({ ok: false, errors: ["Update failed"], details: error.message });
+  }
+});
+
+/*
+ * Direct: stock we bought ourselves, straight into Inventory Units.
+ *
+ * Built, but off until DIRECT_INTAKE_ENABLED=true on this service. When it is
+ * on: pick Direct, the seller it was bought from, and a purchase price per
+ * line, and every pair becomes an Available unit on submit.
+ */
+const DIRECT_INTAKE_ENABLED = /^(1|true|yes|on)$/i.test(process.env.DIRECT_INTAKE_ENABLED || "");
+
+app.get("/api/direct-intake-status", (_req, res) => {
+  res.json({ enabled: DIRECT_INTAKE_ENABLED });
+});
+
+app.post("/api/submit-direct-intake", async (req, res) => {
+  if (!DIRECT_INTAKE_ENABLED) {
+    return res.status(403).json({ ok: false, errors: ["Direct intake is not switched on yet"] });
+  }
+
+  try {
+    const trackingNumber = asText(req.body?.tracking_number);
+    const sellerRecordId = asText(req.body?.seller_record_id);
+    const items = Array.isArray(req.body?.items) ? req.body.items : [];
+    const errors = [];
+
+    if (!sellerRecordId) errors.push("Pick the seller it was bought from");
+    if (!items.length) errors.push("No items");
+
+    const lines = items.map((item) => ({
+      gtin: asText(item.gtin),
+      sku: asText(item.sku).toUpperCase(),
+      size: asText(item.size),
+      quantity: Number(item.quantity),
+      price: Number(String(item.partner_price ?? "").replace(",", "."))
+    }));
+
+    for (const line of lines) {
+      const name = `${line.sku || "?"} / ${line.size || "?"}`;
+      if (!line.sku || !line.size) errors.push(`${name}: SKU and size are required`);
+      if (!Number.isInteger(line.quantity) || line.quantity < 1) errors.push(`${name}: invalid quantity`);
+      if (!(line.price > 0)) errors.push(`${name}: purchase price is required`);
+    }
+
+    if (errors.length) return res.status(400).json({ ok: false, errors });
+
+    const seller = await airtable(AIRTABLE_SELLERS_TABLE).find(sellerRecordId);
+    const vatType = asText(seller.fields["Default VAT Type"]) || "Margin";
+
+    // Names and brands from the catalogue, so the units are not nameless.
+    const catalogue = await callPortal("/api/internal/resolve-sku", {
+      skus: [...new Set(lines.map((line) => line.sku))].slice(0, 50)
+    }).catch(() => ({ results: {} }));
+    const today = new Date().toISOString().split("T")[0];
+
+    const fieldsList = lines.flatMap((line) =>
+      Array.from({ length: line.quantity }, () => {
+        const product = catalogue?.results?.[line.sku] || {};
+
+        const fields = {
+          "Product Name": asText(product.product_name),
+          "Brand": asText(product.brand),
+          "SKU": line.sku,
+          "Size": line.size,
+          "VAT Type": vatType,
+          "Purchase Price": line.price,
+          "Payment Note": String(line.price),
+          "Purchase Date": today,
+          "Seller ID": [sellerRecordId],
+          "Ticket Number": trackingNumber,
+          "Type": "Direct",
+          "Source": "Regular",
+          "Verification Status": "Verified",
+          "Payment Status": "To Pay",
+          "Availability Status": "Available"
+        };
+
+        if (line.gtin) fields["Product GTIN"] = line.gtin;
+
+        return { fields };
+      })
+    );
+
+    let created = 0;
+
+    for (let i = 0; i < fieldsList.length; i += 10) {
+      const records = await airtable(AIRTABLE_INVENTORY_UNITS_TABLE).create(fieldsList.slice(i, i + 10));
+      created += records.length;
+    }
+
+    return res.status(200).json({ ok: true, units_created: created });
+  } catch (error) {
+    console.error("submit-direct-intake failed:", error);
+    return res.status(500).json({ ok: false, errors: ["Direct intake failed"], details: error.message });
+  }
+});
+
 app.post("/api/submit-inbound", async (req, res) => {
   try {
     const trackingNumber = asText(req.body?.tracking_number);
@@ -3280,6 +3661,10 @@ app.post("/api/outbound-lookup-gtin", async (req, res) => {
       ? await getSellerCodeByRecordId(sellerId)
       : "";
 
+    const partnerForGtin = mode === "Forwarding"
+      ? await partnerForwardableLookup({ sellerRecordId: sellerId, barcode: gtin })
+      : null;
+
     const records = await airtable(AIRTABLE_INVENTORY_UNITS_TABLE)
       .select({
         filterByFormula: mode === "Forwarding"
@@ -3294,6 +3679,16 @@ app.post("/api/outbound-lookup-gtin", async (req, res) => {
             )`
       })
       .all();
+
+    const withPartnerPairsForGtin = mergePartnerPairs({
+      partner: partnerForGtin,
+      records,
+      fallback: { gtin, sellerId }
+    });
+
+    if (withPartnerPairsForGtin) {
+      return res.status(200).json(withPartnerPairsForGtin);
+    }
 
     if (!records.length) {
       const anyMatch = await airtable(AIRTABLE_INVENTORY_UNITS_TABLE)
@@ -3383,6 +3778,10 @@ app.post("/api/outbound-search-sku-size", async (req, res) => {
       ? await getSellerCodeByRecordId(sellerId)
       : "";
 
+    const partnerForSku = mode === "Forwarding"
+      ? await partnerForwardableLookup({ sellerRecordId: sellerId, sku, size })
+      : null;
+
     const records = await airtable(AIRTABLE_INVENTORY_UNITS_TABLE)
       .select({
         filterByFormula: mode === "Forwarding"
@@ -3399,6 +3798,16 @@ app.post("/api/outbound-search-sku-size", async (req, res) => {
             )`
       })
       .all();
+
+    const withPartnerPairsForSku = mergePartnerPairs({
+      partner: partnerForSku,
+      records,
+      fallback: { gtin: "", sellerId }
+    });
+
+    if (withPartnerPairsForSku) {
+      return res.status(200).json(withPartnerPairsForSku);
+    }
 
     if (!records.length) {
       return res.status(200).json({
@@ -3482,6 +3891,20 @@ app.post("/api/submit-outbound", async (req, res) => {
 
     if (!linkedInventoryUnitIds.length) {
       return res.status(400).json({ error: "No Inventory Unit record IDs found to submit" });
+    }
+
+    const partnerPairIds = linkedInventoryUnitIds
+      .filter((id) => String(id).startsWith(PARTNER_PAIR_PREFIX))
+      .map((id) => String(id).slice(PARTNER_PAIR_PREFIX.length));
+
+    const airtableUnitIds = linkedInventoryUnitIds.filter(
+      (id) => !String(id).startsWith(PARTNER_PAIR_PREFIX)
+    );
+
+    // Partner pairs are only ever offered for forwarding; selling them from
+    // here would bypass the partner's price entirely.
+    if (mode === "Selling" && partnerPairIds.length) {
+      return res.status(400).json({ error: "Partner pairs can only be forwarded from here" });
     }
 
     if (mode === "Selling") {
@@ -3582,14 +4005,78 @@ app.post("/api/submit-outbound", async (req, res) => {
       createFields["Buyer ID"] = [mainBuyerRecord.id];
     }
 
-    const createdRecord = await airtable(AIRTABLE_FORWARDING_SERVICE_LOG_TABLE).create(createFields);
+    /*
+      Partner pairs: claimed in Supabase first, so a sale coming in at the
+      same moment cannot also take them, then made into Forwarding units.
+      If Airtable fails half way, the pairs go back on the shelf and the units
+      that were made are set Inactive rather than left dangling.
+    */
+    let partnerUnits = [];
 
-    await updateInventoryUnitsToForwardPending(linkedInventoryUnitIds);
+    if (partnerPairIds.length) {
+      const claim = await callPortal("/api/internal/partner-stock/forward", {
+        seller_record_id: sellerId,
+        ids: partnerPairIds,
+        ref: "WMS outbound"
+      });
+
+      if (!claim.ok) {
+        return res.status(claim.httpStatus === 409 ? 409 : 400).json({
+          error: (claim.errors || []).join(" ") || "Partner pairs could not be claimed"
+        });
+      }
+
+      try {
+        partnerUnits = await createForwardingUnitsForPartnerPairsOrUndo(claim.pairs, sellerId);
+      } catch (unitError) {
+        await callPortal("/api/internal/partner-stock/undo-forward", { ids: partnerPairIds }).catch((err) =>
+          console.error("submit-outbound: partner pairs NOT put back:", partnerPairIds, err.message)
+        );
+
+        throw unitError;
+      }
+    }
+
+    createFields["Linked Inventory Units"] = [
+      ...airtableUnitIds,
+      ...partnerUnits.map((unit) => unit.unitId)
+    ];
+
+    let createdRecord;
+
+    try {
+      createdRecord = await airtable(AIRTABLE_FORWARDING_SERVICE_LOG_TABLE).create(createFields);
+    } catch (logError) {
+      if (partnerPairIds.length) {
+        await callPortal("/api/internal/partner-stock/undo-forward", { ids: partnerPairIds }).catch((err) =>
+          console.error("submit-outbound: partner pairs NOT put back:", partnerPairIds, err.message)
+        );
+
+        await deactivateInventoryUnits(partnerUnits.map((unit) => unit.unitId)).catch((err) =>
+          console.error("submit-outbound: partner units NOT deactivated:", err.message)
+        );
+      }
+
+      throw logError;
+    }
+
+    await updateInventoryUnitsToForwardPending(airtableUnitIds);
+
+    if (partnerUnits.length) {
+      await callPortal("/api/internal/partner-stock/link-units", {
+        links: partnerUnits.map((unit) => ({
+          id: unit.pairId,
+          inventory_unit_id: unit.unitId,
+          forwarded_ref: createdRecord.id
+        }))
+      }).catch((err) => console.error("submit-outbound: partner pairs not linked to units:", err.message));
+    }
 
     return res.status(200).json({
       ok: true,
       id: createdRecord.id,
-      linked_inventory_units_count: linkedInventoryUnitIds.length
+      linked_inventory_units_count: createFields["Linked Inventory Units"].length,
+      partner_pairs_forwarded: partnerUnits.length
     });
   } catch (error) {
     console.error("submit-outbound failed:", error);

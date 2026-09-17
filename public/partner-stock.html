@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lojiq WMS - Partner Stock</title>
+  <style>
+    :root {
+      --bg: #07111F;
+      --panel: #0E2238;
+      --border: #163252;
+      --primary: #2F80ED;
+      --primary-soft: #66B3FF;
+      --text: #DCEBFF;
+      --muted: #8FAECC;
+      --warn: #F5B544;
+      --danger: #F04438;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      background:
+        radial-gradient(circle at top, rgba(47,128,237,0.18), transparent 30%),
+        linear-gradient(180deg, #050D18 0%, var(--bg) 100%);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    .wrap {
+      max-width: 1250px;
+      margin: 0 auto;
+      padding: 28px 20px 140px;
+    }
+
+    .top {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      flex-wrap: wrap;
+      margin-bottom: 24px;
+    }
+
+    .home-button {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 22px;
+      border-radius: 14px;
+      text-decoration: none;
+      font-weight: 700;
+      color: var(--text);
+      background: linear-gradient(135deg, var(--primary), var(--primary-soft));
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 40px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+    }
+
+    .card {
+      background: linear-gradient(180deg, rgba(16,41,68,0.95), rgba(14,34,56,0.95));
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 18px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.28);
+    }
+
+    .filters {
+      display: grid;
+      grid-template-columns: 2fr 1fr 2fr auto;
+      gap: 12px;
+      align-items: end;
+      margin-bottom: 18px;
+    }
+
+    label {
+      display: block;
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+
+    .input {
+      width: 100%;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: rgba(7,17,31,0.7);
+      color: var(--text);
+      padding: 12px;
+      font-size: 15px;
+      outline: none;
+    }
+
+    .input:focus { border-color: var(--primary); }
+
+    .button {
+      cursor: pointer;
+      border-radius: 12px;
+      border: none;
+      padding: 12px 18px;
+      font-size: 15px;
+      font-weight: 700;
+      background: linear-gradient(135deg, var(--primary), var(--primary-soft));
+      color: white;
+      white-space: nowrap;
+    }
+
+    .button.secondary {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text);
+    }
+
+    .button.danger {
+      background: transparent;
+      border: 1px solid rgba(240,68,56,0.6);
+      color: #FFB4AE;
+    }
+
+    .button:disabled { opacity: 0.5; cursor: default; }
+
+    .totals {
+      display: flex;
+      gap: 24px;
+      flex-wrap: wrap;
+      font-size: 14px;
+      color: var(--muted);
+      margin-bottom: 14px;
+    }
+
+    .totals strong { color: var(--text); font-variant-numeric: tabular-nums; }
+
+    .table-wrap {
+      overflow-x: auto;
+      border-radius: 16px;
+      border: 1px solid var(--border);
+      background: rgba(7,17,31,0.35);
+    }
+
+    table { width: 100%; border-collapse: collapse; min-width: 980px; }
+
+    th, td {
+      padding: 10px 12px;
+      border-bottom: 1px solid rgba(22,50,82,0.85);
+      text-align: left;
+      vertical-align: middle;
+      font-size: 14px;
+    }
+
+    th {
+      color: var(--muted);
+      font-weight: 700;
+      background: rgba(7,17,31,0.5);
+      position: sticky;
+      top: 0;
+    }
+
+    td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+    tr.sku-row td {
+      background: rgba(47,128,237,0.08);
+      font-weight: 700;
+    }
+
+    tr.pair-row td { color: var(--muted); font-size: 13px; }
+    tr.pair-row td:first-child { padding-left: 34px; }
+
+    .product {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .product img {
+      width: 44px;
+      height: 32px;
+      object-fit: contain;
+      background: #FFFFFF;
+      border-radius: 6px;
+    }
+
+    .toggle {
+      cursor: pointer;
+      background: none;
+      border: none;
+      color: var(--primary-soft);
+      font-size: 13px;
+      padding: 0;
+    }
+
+    .mode {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      border: 1px solid var(--border);
+    }
+
+    .empty {
+      text-align: center;
+      color: var(--muted);
+      padding: 40px 20px;
+    }
+
+    .actionbar {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      padding: 14px 20px calc(14px + env(safe-area-inset-bottom, 0px));
+      background: rgba(7,17,31,0.96);
+      border-top: 1px solid var(--border);
+    }
+
+    .actionbar-inner {
+      max-width: 1250px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: auto 1fr 1fr 1fr auto auto;
+      gap: 12px;
+      align-items: end;
+    }
+
+    .selected-count { font-weight: 700; padding-bottom: 12px; white-space: nowrap; }
+
+    input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--primary); }
+
+    .toast-area {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      display: grid;
+      gap: 10px;
+      z-index: 2000;
+      max-width: 420px;
+    }
+
+    .toast {
+      padding: 14px 16px;
+      border-radius: 12px;
+      font-size: 14px;
+      background: #E6F4EA;
+      color: #133A1F;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.3);
+    }
+
+    .toast.error { background: #FDE8E8; color: #5F2120; }
+    .toast.warning { background: #FDF0DD; color: #6B4A14; }
+
+    @media (max-width: 900px) {
+      .filters, .actionbar-inner { grid-template-columns: 1fr 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="toast-area" id="toastArea" aria-live="polite"></div>
+
+  <div class="wrap">
+    <div class="top">
+      <a href="/" class="home-button">← Home</a>
+      <h1>Partner Stock</h1>
+    </div>
+
+    <div class="card">
+      <div class="filters">
+        <div>
+          <label for="partnerSelect">Partner</label>
+          <select id="partnerSelect" class="input"></select>
+        </div>
+        <div>
+          <label for="statusSelect">Status</label>
+          <select id="statusSelect" class="input">
+            <option value="in_stock" selected>In stock</option>
+            <option value="sold">Sold</option>
+            <option value="forwarded">Forwarded</option>
+            <option value="removed">Removed</option>
+          </select>
+        </div>
+        <div>
+          <label for="searchInput">Search SKU or name</label>
+          <input id="searchInput" class="input" type="search" placeholder="e.g. A01FW702" />
+        </div>
+        <button class="button secondary" id="reloadBtn" type="button">Reload</button>
+      </div>
+
+      <div class="totals" id="totals"></div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:40px"><input type="checkbox" id="selectAll" aria-label="Select everything shown" /></th>
+              <th>Product</th>
+              <th>SKU</th>
+              <th>Size</th>
+              <th>Mode</th>
+              <th class="num">Pairs</th>
+              <th class="num">Partner €</th>
+              <th class="num">Markup €</th>
+              <th class="num">Listing €</th>
+              <th>Received</th>
+            </tr>
+          </thead>
+          <tbody id="stockBody">
+            <tr><td colspan="10" class="empty">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="actionbar" id="actionbar">
+    <div class="actionbar-inner">
+      <div class="selected-count" id="selectedCount">0 pairs selected</div>
+      <div>
+        <label for="newPrice">Partner €</label>
+        <input id="newPrice" class="input" type="text" inputmode="decimal" placeholder="keep" />
+      </div>
+      <div>
+        <label for="newMarkup">Markup €</label>
+        <input id="newMarkup" class="input" type="text" inputmode="decimal" placeholder="keep" />
+      </div>
+      <div>
+        <label for="newMode">Mode</label>
+        <select id="newMode" class="input">
+          <option value="">keep</option>
+          <option value="consignment">Consignment</option>
+          <option value="forwarding">Forwarding</option>
+          <option value="both">Consignment &amp; Forwarding</option>
+        </select>
+      </div>
+      <button class="button" id="applyBtn" type="button" disabled>Apply</button>
+      <button class="button danger" id="removeBtn" type="button" disabled>Remove</button>
+    </div>
+  </div>
+
+  <script>
+    const partnerSelect = document.getElementById("partnerSelect");
+    const statusSelect = document.getElementById("statusSelect");
+    const searchInput = document.getElementById("searchInput");
+    const stockBody = document.getElementById("stockBody");
+    const totalsEl = document.getElementById("totals");
+    const selectAll = document.getElementById("selectAll");
+    const selectedCount = document.getElementById("selectedCount");
+    const applyBtn = document.getElementById("applyBtn");
+    const removeBtn = document.getElementById("removeBtn");
+    const newPrice = document.getElementById("newPrice");
+    const newMarkup = document.getElementById("newMarkup");
+    const newMode = document.getElementById("newMode");
+
+    const MODE_LABEL = { consignment: "Consignment", forwarding: "Forwarding", both: "Cons. & Fwd" };
+
+    let pairs = [];
+    const selected = new Set();
+    const expanded = new Set();
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    function euro(value) {
+      const n = Number(value);
+      return Number.isFinite(n) && value !== null && value !== "" ? n.toFixed(2).replace(".", ",") : "—";
+    }
+
+    function showToast(message, type = "success") {
+      const el = document.createElement("div");
+      el.className = `toast ${type === "success" ? "" : type}`;
+      el.textContent = message;
+      document.getElementById("toastArea").appendChild(el);
+      setTimeout(() => el.remove(), type === "error" ? 9000 : 5000);
+    }
+
+    /*
+     * Pairs grouped the way they differ: same SKU, size, mode, partner price
+     * and markup is one line. A different price for the same size is its own
+     * line, which is exactly what a partner changing his price produces.
+     */
+    function groups() {
+      const query = searchInput.value.trim().toUpperCase();
+      const bySku = new Map();
+
+      for (const pair of pairs) {
+        if (query && !pair.sku.toUpperCase().includes(query) &&
+            !String(pair.product_name || "").toUpperCase().includes(query)) continue;
+
+        if (!bySku.has(pair.sku)) bySku.set(pair.sku, { sku: pair.sku, pair, lines: new Map() });
+
+        const sku = bySku.get(pair.sku);
+        const key = [pair.size, pair.mode, pair.partner_price ?? "", pair.markup ?? 0].join("|");
+
+        if (!sku.lines.has(key)) {
+          sku.lines.set(key, {
+            key: `${pair.sku}|${key}`,
+            size: pair.size,
+            mode: pair.mode,
+            partner_price: pair.partner_price,
+            markup: pair.markup,
+            pairs: []
+          });
+        }
+
+        sku.lines.get(key).pairs.push(pair);
+      }
+
+      const sizeValue = (size) => {
+        const [whole, fraction] = String(size).split(" ");
+        const n = parseFloat(whole);
+        const [top, bottom] = String(fraction || "").split("/").map(Number);
+        const extra = top > 0 && bottom > 0 ? top / bottom : 0;
+        return Number.isFinite(n) ? n + extra : 999;
+      };
+
+      return [...bySku.values()]
+        .sort((a, b) => a.sku.localeCompare(b.sku))
+        .map((sku) => ({
+          ...sku,
+          lines: [...sku.lines.values()].sort(
+            (a, b) => sizeValue(a.size) - sizeValue(b.size) ||
+              Number(a.partner_price || 0) + Number(a.markup || 0) - Number(b.partner_price || 0) - Number(b.markup || 0)
+          )
+        }));
+    }
+
+    function checkboxState(ids) {
+      const chosen = ids.filter((id) => selected.has(id)).length;
+      return { checked: chosen > 0 && chosen === ids.length, partial: chosen > 0 && chosen < ids.length };
+    }
+
+    function render() {
+      const list = groups();
+      const shown = list.flatMap((sku) => sku.lines.flatMap((line) => line.pairs));
+      const listed = shown.filter((pair) => pair.mode !== "forwarding");
+
+      totalsEl.innerHTML =
+        `<span>Pairs <strong>${shown.length}</strong></span>` +
+        `<span>SKUs <strong>${list.length}</strong></span>` +
+        `<span>Listed <strong>${listed.length}</strong></span>` +
+        `<span>Forwarding only <strong>${shown.length - listed.length}</strong></span>` +
+        `<span>Partner value <strong>€ ${euro(listed.reduce((sum, pair) => sum + Number(pair.partner_price || 0), 0))}</strong></span>`;
+
+      if (!list.length) {
+        stockBody.innerHTML = `<tr><td colspan="10" class="empty">${pairs.length ? "Nothing matches the search." : "No pairs with this status."}</td></tr>`;
+        updateSelection();
+        return;
+      }
+
+      const editable = statusSelect.value === "in_stock";
+      const rows = [];
+
+      for (const sku of list) {
+        const skuIds = sku.lines.flatMap((line) => line.pairs.map((pair) => pair.id));
+        const skuState = checkboxState(skuIds);
+        const picture = sku.pair.image_url
+          ? `<img src="${escapeHtml(sku.pair.image_url)}" alt="" loading="lazy" />`
+          : "";
+
+        rows.push(`
+          <tr class="sku-row">
+            <td>${editable ? `<input type="checkbox" data-ids="${skuIds.join(",")}" ${skuState.checked ? "checked" : ""} data-partial="${skuState.partial}" aria-label="Select all sizes of ${escapeHtml(sku.sku)}" />` : ""}</td>
+            <td colspan="4"><div class="product">${picture}<span>${escapeHtml(sku.pair.product_name || sku.sku)}</span></div></td>
+            <td class="num">${skuIds.length}</td>
+            <td colspan="4">${escapeHtml(sku.sku)}</td>
+          </tr>
+        `);
+
+        for (const line of sku.lines) {
+          const ids = line.pairs.map((pair) => pair.id);
+          const state = checkboxState(ids);
+          const listing = line.partner_price != null ? Number(line.partner_price) + Number(line.markup || 0) : null;
+          const received = line.pairs.map((pair) => pair.received_at).sort()[0];
+          const open = expanded.has(line.key);
+
+          rows.push(`
+            <tr>
+              <td>${editable ? `<input type="checkbox" data-ids="${ids.join(",")}" ${state.checked ? "checked" : ""} data-partial="${state.partial}" aria-label="Select size ${escapeHtml(line.size)}" />` : ""}</td>
+              <td><button class="toggle" type="button" data-toggle="${escapeHtml(line.key)}">${open ? "▾" : "▸"} ${ids.length === 1 ? "1 pair" : `${ids.length} pairs`}</button></td>
+              <td>${escapeHtml(sku.sku)}</td>
+              <td>${escapeHtml(line.size)}</td>
+              <td><span class="mode">${MODE_LABEL[line.mode] || escapeHtml(line.mode)}</span></td>
+              <td class="num">${ids.length}</td>
+              <td class="num">${euro(line.partner_price)}</td>
+              <td class="num">${line.mode === "forwarding" ? "—" : euro(line.markup)}</td>
+              <td class="num">${line.mode === "forwarding" ? "—" : euro(listing)}</td>
+              <td>${received ? new Date(received).toLocaleDateString("nl-NL") : "—"}</td>
+            </tr>
+          `);
+
+          if (open) {
+            for (const pair of line.pairs) {
+              const extra = statusSelect.value === "sold"
+                ? `Sold ${pair.sold_at ? new Date(pair.sold_at).toLocaleDateString("nl-NL") : ""} ${escapeHtml(pair.sold_ref || "")}`
+                : statusSelect.value === "forwarded"
+                  ? `Forwarded ${pair.forwarded_at ? new Date(pair.forwarded_at).toLocaleDateString("nl-NL") : ""}`
+                  : `Parcel ${escapeHtml(pair.tracking_number || "—")}`;
+
+              rows.push(`
+                <tr class="pair-row">
+                  <td>${editable ? `<input type="checkbox" data-ids="${pair.id}" ${selected.has(pair.id) ? "checked" : ""} aria-label="Select this pair" />` : ""}</td>
+                  <td colspan="2">Barcode ${escapeHtml(pair.barcode || "—")}</td>
+                  <td colspan="4">${extra}</td>
+                  <td colspan="3">${escapeHtml(pair.id.slice(0, 8))}</td>
+                </tr>
+              `);
+            }
+          }
+        }
+      }
+
+      stockBody.innerHTML = rows.join("");
+
+      for (const box of stockBody.querySelectorAll('input[data-partial="true"]')) {
+        box.indeterminate = true;
+      }
+
+      updateSelection();
+    }
+
+    function updateSelection() {
+      const editable = statusSelect.value === "in_stock";
+      const count = selected.size;
+
+      selectedCount.textContent = count === 1 ? "1 pair selected" : `${count} pairs selected`;
+      applyBtn.disabled = !editable || count === 0;
+      removeBtn.disabled = !editable || count === 0;
+      document.getElementById("actionbar").hidden = !editable;
+
+      const shownIds = [...stockBody.querySelectorAll("input[data-ids]")]
+        .flatMap((box) => box.dataset.ids.split(","));
+      const state = checkboxState([...new Set(shownIds)]);
+      selectAll.checked = state.checked;
+      selectAll.indeterminate = state.partial;
+      selectAll.disabled = !editable;
+    }
+
+    async function loadPartners() {
+      const response = await fetch("/api/partners");
+      const data = await response.json();
+
+      if (!response.ok) throw new Error(data.details || data.error || "Could not load partners");
+
+      partnerSelect.innerHTML = (data.partners || [])
+        .map((partner) => `<option value="${escapeHtml(partner.id)}">${escapeHtml(partner.label)} (${escapeHtml(partner.seller_id)})</option>`)
+        .join("");
+
+      if (!data.partners?.length) {
+        partnerSelect.innerHTML = `<option value="">No partners - set a Default VAT Type on Sellers Database</option>`;
+      }
+    }
+
+    async function loadStock() {
+      selected.clear();
+
+      if (!partnerSelect.value) {
+        pairs = [];
+        render();
+        return;
+      }
+
+      stockBody.innerHTML = `<tr><td colspan="10" class="empty">Loading…</td></tr>`;
+
+      const params = new URLSearchParams({
+        seller_record_id: partnerSelect.value,
+        statuses: statusSelect.value
+      });
+
+      const response = await fetch(`/api/partner-stock?${params}`);
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok || !data.ok) {
+        pairs = [];
+        stockBody.innerHTML = `<tr><td colspan="10" class="empty">${escapeHtml((data.errors || ["Could not load partner stock"]).join(" "))}</td></tr>`;
+        return;
+      }
+
+      pairs = data.pairs || [];
+      render();
+    }
+
+    async function sendUpdate(changes) {
+      const ids = [...selected];
+
+      applyBtn.disabled = true;
+      removeBtn.disabled = true;
+
+      try {
+        const response = await fetch("/api/partner-stock/update", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ seller_record_id: partnerSelect.value, ids, changes })
+        });
+
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok || !data.ok) {
+          throw new Error((data.errors || []).join(" ") || "Update failed");
+        }
+
+        showToast(
+          `${data.updated} pair(s) updated${data.skipped ? `, ${data.skipped} skipped (no longer in stock)` : ""}. Listings follow within 30 minutes.`
+        );
+
+        newPrice.value = "";
+        newMarkup.value = "";
+        newMode.value = "";
+        await loadStock();
+      } catch (error) {
+        showToast(error.message, "error");
+        updateSelection();
+      }
+    }
+
+    stockBody.addEventListener("change", (event) => {
+      const box = event.target;
+      if (!(box instanceof HTMLInputElement) || !box.dataset.ids) return;
+
+      for (const id of box.dataset.ids.split(",")) {
+        if (box.checked) selected.add(id);
+        else selected.delete(id);
+      }
+
+      render();
+    });
+
+    stockBody.addEventListener("click", (event) => {
+      const toggle = event.target.closest("[data-toggle]");
+      if (!toggle) return;
+
+      const key = toggle.dataset.toggle;
+      if (expanded.has(key)) expanded.delete(key);
+      else expanded.add(key);
+
+      render();
+    });
+
+    selectAll.addEventListener("change", () => {
+      const ids = [...stockBody.querySelectorAll("input[data-ids]")]
+        .flatMap((box) => box.dataset.ids.split(","));
+
+      for (const id of ids) {
+        if (selectAll.checked) selected.add(id);
+        else selected.delete(id);
+      }
+
+      render();
+    });
+
+    applyBtn.addEventListener("click", () => {
+      const changes = {};
+
+      if (newPrice.value.trim()) changes.partner_price = newPrice.value.trim();
+      if (newMarkup.value.trim()) changes.markup = newMarkup.value.trim();
+      if (newMode.value) changes.mode = newMode.value;
+
+      if (!Object.keys(changes).length) {
+        showToast("Fill in a partner price, markup or mode to change.", "warning");
+        return;
+      }
+
+      sendUpdate(changes);
+    });
+
+    removeBtn.addEventListener("click", () => {
+      const note = window.prompt(
+        `Take ${selected.size} pair(s) off the shelf? They stop being listed and cannot be forwarded.\n\nReason (optional):`,
+        ""
+      );
+
+      if (note === null) return;
+
+      sendUpdate({ remove: true, note });
+    });
+
+    partnerSelect.addEventListener("change", loadStock);
+    statusSelect.addEventListener("change", () => {
+      expanded.clear();
+      loadStock();
+    });
+    searchInput.addEventListener("input", render);
+    document.getElementById("reloadBtn").addEventListener("click", loadStock);
+
+    loadPartners()
+      .then(loadStock)
+      .catch((error) => {
+        stockBody.innerHTML = `<tr><td colspan="10" class="empty">${escapeHtml(error.message)}</td></tr>`;
+      });
+  </script>
+</body>
+</html>

@@ -283,6 +283,20 @@
       color: var(--primary-soft);
     }
 
+    .table input.price-input {
+      width: 90px;
+    }
+
+    .price-col[hidden] {
+      display: none !important;
+    }
+
+    .intake-hint {
+      margin: 0 0 12px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
     .product {
       display: flex;
       align-items: center;
@@ -622,7 +636,8 @@
               <option value="Unknown">Unknown</option>
               <option value="Consignment">Consignment</option>
               <option value="Forwarding">Forwarding</option>
-              <option value="Regular">Regular</option>
+              <option value="Both">Consignment &amp; Forwarding</option>
+              <option value="Direct" id="directTypeOption" disabled>Direct (coming later)</option>
             </select>
           </div>
         
@@ -635,6 +650,8 @@
           </div>
         </div>
 
+        <p class="intake-hint" id="intakeHint" hidden></p>
+
         <div class="table-wrap">
           <table class="table">
             <thead>
@@ -644,12 +661,14 @@
                 <th>SKU</th>
                 <th>Size</th>
                 <th>Quantity</th>
+                <th class="price-col" id="priceHeader" hidden>Partner €</th>
+                <th class="price-col" id="markupHeader" hidden>Markup €</th>
                 <th></th>
               </tr>
             </thead>
             <tbody id="itemsTableBody">
               <tr>
-                <td colspan="6" class="empty">No items scanned yet</td>
+                <td colspan="8" class="empty">No items scanned yet</td>
               </tr>
             </tbody>
           </table>
@@ -791,6 +810,127 @@
     
     let currentMode = "";
     let currentReturnId = "";
+
+    /*
+     * Which prices a row needs, from the Type.
+     *
+     * Consignment, and Consignment & Forwarding: the partner's own price and
+     * our markup on top, because those pairs are listed. Forwarding only:
+     * none. Direct: the purchase price, in the same column.
+     */
+    const PARTNER_TYPES = ["Consignment", "Forwarding", "Both"];
+
+    function currentPriceMode() {
+      const type = typeSelect.value;
+      if (type === "Consignment" || type === "Both") return "partner";
+      if (type === "Direct") return "direct";
+      return "";
+    }
+
+    let partnerOptions = [];
+    let partyOptionsHtml = "";
+    let partyListKind = "parties";
+
+    function updatePriceHeaders() {
+      const mode = currentPriceMode();
+      const priceHeader = document.getElementById("priceHeader");
+      const markupHeader = document.getElementById("markupHeader");
+      const hint = document.getElementById("intakeHint");
+
+      priceHeader.hidden = !(mode === "partner" || mode === "direct");
+      priceHeader.textContent = mode === "direct" ? "Purchase €" : "Partner €";
+      markupHeader.hidden = mode !== "partner";
+
+      const type = typeSelect.value;
+
+      if (PARTNER_TYPES.includes(type)) {
+        hint.hidden = false;
+        hint.textContent = mode === "partner"
+          ? "Partner stock: goes to the partner's shelf in Supabase and is listed right away. A price or markup typed on one size fills the other sizes of that SKU that are still empty."
+          : "Partner stock for forwarding only: goes to the partner's shelf in Supabase, not listed.";
+      } else if (type === "Direct") {
+        hint.hidden = false;
+        hint.textContent = "Direct: bought by us. Every pair becomes an Available Inventory Unit at this purchase price.";
+      } else {
+        hint.hidden = true;
+      }
+    }
+
+    // Partner types list only partners; everything else the usual clients.
+    function refreshClientOptions() {
+      const wantPartners = PARTNER_TYPES.includes(typeSelect.value) || typeSelect.value === "Direct";
+      const kind = wantPartners ? "partners" : "parties";
+
+      if (kind === partyListKind) return;
+
+      const previous = partySelect.value;
+      partyListKind = kind;
+
+      if (kind === "partners") {
+        partySelect.innerHTML = `<option value="" selected disabled>Select Partner</option>` +
+          partnerOptions
+            .map((partner) => `<option value="partner:${escapeHtml(partner.id)}">${escapeHtml(partner.label)} (${escapeHtml(partner.seller_id)})</option>`)
+            .join("");
+
+        if (partnerOptions.length === 1) {
+          partySelect.value = `partner:${partnerOptions[0].id}`;
+        }
+      } else {
+        partySelect.innerHTML = partyOptionsHtml;
+      }
+
+      if (previous && [...partySelect.options].some((option) => option.value === previous)) {
+        partySelect.value = previous;
+      }
+    }
+
+    async function loadPartners() {
+      try {
+        const [partnersResponse, directResponse] = await Promise.all([
+          fetch("/api/partners"),
+          fetch("/api/direct-intake-status")
+        ]);
+
+        const data = await partnersResponse.json();
+        if (!partnersResponse.ok) throw new Error(data.details || data.error || "Failed to load partners");
+
+        partnerOptions = data.partners || [];
+
+        const direct = await directResponse.json().catch(() => ({}));
+        const directOption = document.getElementById("directTypeOption");
+
+        if (direct.enabled) {
+          directOption.disabled = false;
+          directOption.textContent = "Direct";
+        }
+      } catch (error) {
+        showToast(`Failed to load partners: ${error.message}`, "error", "Error");
+      }
+    }
+
+    /*
+     * A price typed on one size is usually the price of the whole SKU. It
+     * fills the other rows of that SKU where the field is still empty, and
+     * never overwrites a number someone already typed.
+     */
+    function fillSameSku(index, field) {
+      const source = items[index];
+      const sku = source.sku.trim().toUpperCase();
+      const value = source[field];
+
+      if (!sku || value === "" || value === undefined) return;
+
+      items.forEach((item, otherIndex) => {
+        if (otherIndex === index) return;
+        if (item.sku.trim().toUpperCase() !== sku) return;
+        if (item[field] !== undefined && String(item[field]).trim() !== "") return;
+
+        item[field] = value;
+
+        const input = itemsTableBody.querySelector(`input[data-index="${otherIndex}"][data-field="${field}"]`);
+        if (input) input.value = value;
+      });
+    }
 
     function normalizeScannedInput(value) {
       const raw = String(value || "").trim();
@@ -948,12 +1088,16 @@
       if (items.length === 0) {
         itemsTableBody.innerHTML = `
           <tr>
-            <td colspan="6" class="empty">No items scanned yet</td>
+            <td colspan="8" class="empty">No items scanned yet</td>
           </tr>
         `;
         updateStatusPanel();
         return;
       }
+
+      const priceMode = currentPriceMode();
+      const showPrice = priceMode === "partner" || priceMode === "direct";
+      const showMarkup = priceMode === "partner";
 
       itemsTableBody.innerHTML = items.map((item, index) => `
         <tr>
@@ -984,6 +1128,28 @@
               data-index="${index}"
               data-field="quantity"
               class="qty-input"
+            />
+          </td>
+          <td class="price-col" ${showPrice ? "" : "hidden"}>
+            <input
+              type="text"
+              inputmode="decimal"
+              class="price-input"
+              value="${escapeHtml(item.partner_price ?? "")}"
+              placeholder="${priceMode === "direct" ? "Purchase" : "Partner"}"
+              data-index="${index}"
+              data-field="partner_price"
+            />
+          </td>
+          <td class="price-col" ${showMarkup ? "" : "hidden"}>
+            <input
+              type="text"
+              inputmode="decimal"
+              class="price-input"
+              value="${escapeHtml(item.markup ?? "")}"
+              placeholder="Markup"
+              data-index="${index}"
+              data-field="markup"
             />
           </td>
           <td>
@@ -1280,6 +1446,10 @@
           el.textContent = option.label;
           partySelect.appendChild(el);
         }
+
+        partyOptionsHtml = partySelect.innerHTML;
+        partyListKind = "parties";
+        refreshClientOptions();
       } catch (error) {
         showToast(`Failed to load clients: ${error.message}`, "error", "Error");
       }
@@ -1344,9 +1514,120 @@
       receivedSizeWrap.style.display = "none";
       receivedSkuWrap.style.display = "none";
       
+      refreshClientOptions();
+      updatePriceHeaders();
       showStartState();
       renderTable();
       trackingInput.focus();
+    }
+
+    function clearParcelAfterSubmit() {
+      parcelStarted = false;
+      trackingNumber = "";
+      parcelType = "";
+      selectedPartyId = "";
+      selectedPartySource = "";
+      items = [];
+      trackingInput.value = "";
+      typeSelect.value = "";
+      partySelect.value = "";
+      scanInput.value = "";
+      manualSkuInput.value = "";
+      manualSizeInput.value = "";
+      refreshClientOptions();
+      updatePriceHeaders();
+      renderTable();
+      trackingInput.focus();
+    }
+
+    /*
+     * A partner parcel (or Direct) goes to its own endpoint.
+     *
+     * Every line needs a known SKU and size here - a pair on a partner's
+     * shelf is a pair of one specific shoe - and every refusal comes back as
+     * a list, shown all at once.
+     */
+    async function submitPartnerParcel(selectedType, selectedPartyValue, { append = false } = {}) {
+      const [kind, sellerRecordId] = String(selectedPartyValue).split(":");
+
+      if (kind !== "partner" || !sellerRecordId) {
+        showToast("Pick the partner this parcel belongs to.", "warning", "Warning");
+        partySelect.focus();
+        return;
+      }
+
+      const missing = items.filter((item) => !item.sku.trim() || !item.size.trim());
+
+      if (missing.length) {
+        showToast("Every line needs a SKU and size for partner stock. Fill them in or remove the line.", "error", "Error");
+        return;
+      }
+
+      const direct = selectedType === "Direct";
+
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Submitting...";
+
+      try {
+        const response = await fetch(direct ? "/api/submit-direct-intake" : "/api/submit-partner-intake", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            tracking_number: trackingNumber,
+            type: selectedType,
+            seller_record_id: sellerRecordId,
+            append,
+            items: items.map((item) => ({
+              gtin: item.gtin,
+              sku: item.sku.trim(),
+              size: item.size.trim(),
+              quantity: item.quantity,
+              partner_price: item.partner_price ?? "",
+              markup: item.markup ?? ""
+            }))
+          })
+        });
+
+        const data = await response.json().catch(() => ({}));
+
+        if (response.status === 409 && !direct && !append) {
+          const again = window.confirm(
+            `${(data.errors || []).join(" ")}\n\nAdd these pairs to that parcel anyway?`
+          );
+
+          if (again) {
+            submitBtn.disabled = false;
+            submitBtn.textContent = "Submit";
+            await submitPartnerParcel(selectedType, selectedPartyValue, { append: true });
+          }
+          return;
+        }
+
+        if (!response.ok || !data.ok) {
+          throw new Error((data.errors || []).join(" · ") || data.details || "Submit failed");
+        }
+
+        if (direct) {
+          showToast(`${data.units_created} Direct unit(s) created.`, "success", "Success");
+        } else {
+          showToast(
+            `${data.pairs_created} pair(s) on the shelf of ${data.seller_id}.`,
+            "success",
+            "Success"
+          );
+
+          for (const note of data.notes || []) {
+            showToast(note, "warning", "Price check");
+          }
+        }
+
+        clearParcelAfterSubmit();
+      } catch (error) {
+        showToast(`Submit error: ${error.message}`, "error", "Error");
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Submit";
+      }
     }
 
     async function submitParcel() {
@@ -1397,7 +1678,12 @@
       }
       
       parcelType = selectedType;
-      
+
+      if (PARTNER_TYPES.includes(selectedType) || selectedType === "Direct") {
+        await submitPartnerParcel(selectedType, selectedPartyValue);
+        return;
+      }
+
       if (selectedPartyValue === "unknown") {
         selectedPartyId = "";
         selectedPartySource = "";
@@ -1605,6 +1891,11 @@
         items[index][field] = target.value;
         return;
       }
+
+      if (field === "partner_price" || field === "markup") {
+        items[index][field] = target.value.trim();
+        return;
+      }
     
       if (field === "quantity") {
         const parsed = Number(target.value);
@@ -1622,13 +1913,26 @@
     });
 
     // A SKU typed or corrected by hand gets its name and picture once the
-    // field is left.
+    // field is left; a price fills the empty rows of the same SKU.
     itemsTableBody.addEventListener("change", (event) => {
       const target = event.target;
-      if (!(target instanceof HTMLInputElement) || target.dataset.field !== "sku") return;
+      if (!(target instanceof HTMLInputElement)) return;
 
-      const item = items[Number(target.dataset.index)];
-      if (item) loadProductInfo(item, { learn: true });
+      const index = Number(target.dataset.index);
+      const item = items[index];
+      if (!item) return;
+
+      if (target.dataset.field === "sku") {
+        loadProductInfo(item, { learn: true });
+      } else if (target.dataset.field === "partner_price" || target.dataset.field === "markup") {
+        fillSameSku(index, target.dataset.field);
+      }
+    });
+
+    typeSelect.addEventListener("change", () => {
+      refreshClientOptions();
+      updatePriceHeaders();
+      renderTable();
     });
 
     itemsTableBody.addEventListener("click", (event) => {
@@ -1672,7 +1976,8 @@
 
     renderTable();
     showStartState();
-    loadInboundParties();
+    loadPartners().then(loadInboundParties);
+    updatePriceHeaders();
     trackingInput.focus();
   </script>
 </body>
