@@ -606,77 +606,58 @@ async function updateInventoryUnitsToReserved(recordIds) {
 }
 
 /*
- * A Forwarding unit for every partner pair that leaves.
- *
- * The same shape Make 8.2 gave a forwarded pair at intake, made at the moment
- * it is sent on instead: no prices, Verified, and straight to Forward Pending
- * because the outbound that takes it is being made right now.
+ * Tracking numbers as typed: one per row, or several in one field separated
+ * by commas, spaces or new lines. Duplicates dropped, order kept.
  */
-async function createForwardingUnitsForPartnerPairs(pairs, sellerRecordId) {
-  const today = new Date().toISOString().split("T")[0];
-  const made = [];
+function trackingList(value) {
+  const raw = Array.isArray(value) ? value.join(",") : asText(value);
 
-  for (let i = 0; i < pairs.length; i += 10) {
-    const batch = pairs.slice(i, i + 10);
+  return [
+    ...new Set(
+      raw
+        .split(/[\s,;]+/)
+        .map((part) => part.trim())
+        .filter(Boolean)
+    )
+  ];
+}
 
-    const records = await airtable(AIRTABLE_INVENTORY_UNITS_TABLE).create(
-      batch.map((pair) => {
-        const fields = {
-          "Product Name": asText(pair.product_name),
-          "SKU": asText(pair.sku),
-          "Size": asText(pair.size),
-          "Brand": asText(pair.brand),
-          "VAT Type": asText(pair.vat_type) || "Margin",
-          "Seller ID": [sellerRecordId],
-          "Ticket Number": asText(pair.tracking_number) || asText(pair.id),
-          "Type": "Forwarding",
-          "Source": "Regular",
-          "Verification Status": "Verified",
-          "Availability Status": "Forward Pending",
-          "Purchase Date": today
-        };
+/*
+ * Label PDFs sent along with an outbound, stored in R2.
+ *
+ * Arrive as data URLs from the page. Anything that is not a PDF is refused
+ * rather than stored, because a label that will not print is found out at
+ * the moment the parcel has to go.
+ */
+async function storeLabelFiles(files, folder) {
+  const stored = [];
 
-        if (asText(pair.barcode)) fields["Product GTIN"] = asText(pair.barcode);
+  for (const [index, file] of (Array.isArray(files) ? files : []).entries()) {
+    let buffer = null;
 
-        return { fields };
-      })
-    );
+    try {
+      buffer = pdfBufferFromDataUrl(asText(file?.data_url));
+    } catch {
+      buffer = null;
+    }
 
-    records.forEach((record, index) => {
-      made.push({ pairId: batch[index].id, unitId: record.id });
+    if (!buffer || buffer.length < 100 || buffer.subarray(0, 5).toString("latin1") !== "%PDF-") {
+      throw Object.assign(new Error(`Label ${index + 1} is not a PDF file`), { statusCode: 400 });
+    }
+
+    const name = sanitizeFileName(asText(file?.filename) || `label-${index + 1}.pdf`);
+    const key = `${folder}/${Date.now()}-${index + 1}-${name}`;
+    const url = await uploadPdfToR2({ key, pdfBuffer: buffer });
+
+    stored.push({
+      url,
+      filename: name,
+      tracking: asText(file?.tracking) || null,
+      uploaded_at: new Date().toISOString()
     });
   }
 
-  return made;
-}
-
-// Same, but a failure half way deactivates what was already made.
-async function createForwardingUnitsForPartnerPairsOrUndo(pairs, sellerRecordId) {
-  const made = [];
-
-  try {
-    for (let i = 0; i < pairs.length; i += 10) {
-      made.push(...(await createForwardingUnitsForPartnerPairs(pairs.slice(i, i + 10), sellerRecordId)));
-    }
-
-    return made;
-  } catch (err) {
-    await deactivateInventoryUnits(made.map((unit) => unit.unitId)).catch((undoErr) =>
-      console.error("Partner forwarding units NOT deactivated:", undoErr.message)
-    );
-
-    throw err;
-  }
-}
-
-async function deactivateInventoryUnits(recordIds) {
-  const ids = [...new Set((recordIds || []).filter(Boolean))];
-
-  for (let i = 0; i < ids.length; i += 10) {
-    await airtable(AIRTABLE_INVENTORY_UNITS_TABLE).update(
-      ids.slice(i, i + 10).map((id) => ({ id, fields: { "Availability Status": "Inactive" } }))
-    );
-  }
+  return stored;
 }
 
 async function getAverageForwardingFeeForSellerIds(sellerIds) {
@@ -1038,6 +1019,31 @@ async function getPackShipOutboundOptions() {
       };
     })
     .filter((option) => option.tracking_numbers_count > 0);
+
+  /*
+    Partner forwards live in Supabase. Same rule as the Airtable logs: Ready
+    to Ship and at least one tracking number. A portal that does not answer
+    must not take the rest of Pack & Ship down with it.
+  */
+  let supabaseForwardOptions = [];
+
+  try {
+    const data = await callPortal("/api/internal/forwarding/list", { statuses: ["ready_to_ship"] });
+
+    supabaseForwardOptions = (data?.forwards || [])
+      .filter((forward) => (forward.tracking_numbers || []).length > 0)
+      .map((forward) => ({
+        id: forward.id,
+        source_table: "forwarding_log",
+        label: `${forward.display_id} - ${forward.buyer_name || forward.seller_name || forward.seller_id}`,
+        shipping_status: "Ready to Ship",
+        tracking_numbers_count: forward.tracking_numbers.length
+      }));
+  } catch (error) {
+    console.error("pack-ship: partner forwards not loaded:", error.message);
+  }
+
+  forwardingOptions.push(...supabaseForwardOptions);
 
   const unfulfilledInventoryIds = [
     ...new Set(
@@ -2125,6 +2131,27 @@ async function getPackShipOutboundDetails(outboundId, sourceTable) {
     };
   }
 
+  if (sourceTable === "forwarding_log") {
+    const data = await callPortal("/api/internal/forwarding/get", { id: outboundId });
+
+    if (!data?.ok) throw new Error((data?.errors || []).join(" ") || "Forward not found");
+
+    return {
+      id: data.forward.id,
+      source_table: "forwarding_log",
+      shipping_status: data.forward.shipping_status === "ready_to_ship" ? "Ready to Ship" : data.forward.shipping_status,
+      tracking_numbers: data.forward.tracking_numbers || [],
+      shipping_labels: (data.forward.labels || []).map((label) => ({ url: label.url, filename: label.filename })),
+      items: (data.pairs || []).map((pair) => ({
+        id: `${PARTNER_PAIR_PREFIX}${pair.id}`,
+        gtin: asText(pair.barcode),
+        product_name: asText(pair.product_name),
+        sku: asText(pair.sku),
+        size: asText(pair.size)
+      }))
+    };
+  }
+
   const tableName =
     sourceTable === "forwarding_service_log"
       ? AIRTABLE_FORWARDING_SERVICE_LOG_TABLE
@@ -2677,6 +2704,26 @@ app.post("/api/submit-direct-intake", async (req, res) => {
   } catch (error) {
     console.error("submit-direct-intake failed:", error);
     return res.status(500).json({ ok: false, errors: ["Direct intake failed"], details: error.message });
+  }
+});
+
+/*
+ * Store one label PDF and hand back its address.
+ *
+ * For the Lojiq Admin portal, which adds labels to a forward after the fact
+ * and has no R2 keys of its own.
+ */
+app.post("/api/upload-label-file", async (req, res) => {
+  try {
+    const [stored] = await storeLabelFiles(
+      [{ filename: req.body?.file_name, data_url: req.body?.file_data_url, tracking: req.body?.tracking }],
+      asText(req.body?.folder).replace(/[^a-z0-9-]/gi, "") || "labels"
+    );
+
+    return res.status(200).json({ ok: true, ...stored });
+  } catch (error) {
+    console.error("upload-label-file failed:", error.message);
+    return res.status(error.statusCode || 500).json({ ok: false, error: error.message });
   }
 });
 
@@ -3445,6 +3492,19 @@ app.post("/api/submit-pack-ship", async (req, res) => {
       });
     }
 
+    if (sourceTable === "forwarding_log") {
+      const data = await callPortal("/api/internal/forwarding/ship", {
+        id: outboundId,
+        items_per_parcel: itemsPerParcel
+      });
+
+      if (!data?.ok) {
+        return res.status(409).json({ error: (data?.errors || []).join(" ") || "Could not ship this forward" });
+      }
+
+      return res.status(200).json({ ok: true });
+    }
+
     const tableName =
       sourceTable === "forwarding_service_log"
         ? AIRTABLE_FORWARDING_SERVICE_LOG_TABLE
@@ -3869,6 +3929,8 @@ app.post("/api/submit-outbound", async (req, res) => {
     const shippingCosts = Number(req.body?.shipping_costs) || 0;
     const shippingLabels = Number(req.body?.shipping_labels) || 0;
     const items = Array.isArray(req.body?.items) ? req.body.items : [];
+    const trackingNumbers = trackingList(req.body?.tracking_numbers);
+    const labelFiles = Array.isArray(req.body?.label_files) ? req.body.label_files : [];
 
     if (mode !== "Selling" && mode !== "Forwarding") {
       return res.status(400).json({ error: "Invalid outbound mode" });
@@ -3907,6 +3969,31 @@ app.post("/api/submit-outbound", async (req, res) => {
       return res.status(400).json({ error: "Partner pairs can only be forwarded from here" });
     }
 
+    // A forward is either partner pairs (Supabase) or old Airtable units, not
+    // both: they end up in two different logs.
+    if (partnerPairIds.length && airtableUnitIds.length) {
+      return res.status(400).json({
+        error: "Partner pairs and old Airtable units cannot go in one outbound. Submit them separately."
+      });
+    }
+
+    // Tracking typed in now makes the outbound Ready to Ship straight away.
+    const shippingFieldsFor = async (folder) => {
+      const stored = await storeLabelFiles(labelFiles, folder);
+      const fields = {};
+
+      if (trackingNumbers.length) {
+        fields["Tracking Numbers"] = trackingNumbers.join(", ");
+        fields["Shipping Status"] = "Ready to Ship";
+      }
+
+      if (stored.length) {
+        fields["Shipping Labels"] = stored.map((file) => ({ url: file.url, filename: file.filename }));
+      }
+
+      return { fields, stored };
+    };
+
     if (mode === "Selling") {
       if (!buyerId) {
         return res.status(400).json({ error: "Missing buyer_id" });
@@ -3936,13 +4023,16 @@ app.post("/api/submit-outbound", async (req, res) => {
         });
       }
       
+      const { fields: salesShippingFields } = await shippingFieldsFor("external-sales");
+
       const createdRecord = await airtable(AIRTABLE_EXTERNAL_SALES_LOG_TABLE).create({
         "Buyer ID": [mainBuyerRecord.id],
         "Linked Inventory Units": linkedInventoryUnitIds,
         "Total Selling Price": totalSellingPrice,
         "Shipping Costs": shippingCosts,
         "Amount of Labels": shippingLabels,
-        "Sale Date": new Date().toISOString().split("T")[0]
+        "Sale Date": new Date().toISOString().split("T")[0],
+        ...salesShippingFields
       });
 
       await updateInventoryUnitsToReserved(linkedInventoryUnitIds);
@@ -3962,22 +4052,8 @@ app.post("/api/submit-outbound", async (req, res) => {
       return res.status(400).json({ error: "Buyer is required when labels are needed" });
     }
 
-    const forwardingUnitFees = items
-      .map((item) => Number(item?.unit_forwarding_fee))
-      .filter((value) => Number.isFinite(value));
-
-    const averageForwardingFee = forwardingUnitFees.length
-      ? forwardingUnitFees.reduce((sum, value) => sum + value, 0) / forwardingUnitFees.length
-      : 0;
-
-    const createFields = {
-      "Seller ID": [sellerId],
-      "Linked Inventory Units": linkedInventoryUnitIds,
-      "Shipping Costs": shippingCosts,
-      "Amount of Labels": shippingLabels,
-      "Unit Forwarding Fee": averageForwardingFee,
-      "Forwarding Date": new Date().toISOString().split("T")[0]
-    };
+    let mainBuyerRecord = null;
+    let buyerIdValue = "";
 
     if (buyerId) {
       const externalBuyerRecords = await buyersBase(BUYERS_AIRTABLE_TABLE)
@@ -3993,99 +4069,123 @@ app.post("/api/submit-outbound", async (req, res) => {
         return res.status(400).json({ error: "Selected buyer not found" });
       }
 
-      const buyerIdValue = asText(externalBuyer.fields["Buyer ID"]);
-      const mainBuyerRecord = await findMainBuyerRecordByBuyerId(buyerIdValue);
+      buyerIdValue = asText(externalBuyer.fields["Buyer ID"]);
+      mainBuyerRecord = await findMainBuyerRecordByBuyerId(buyerIdValue);
 
       if (!mainBuyerRecord) {
         return res.status(400).json({
           error: `No matching buyer found in main Airtable for Buyer ID ${buyerIdValue}`
         });
       }
-
-      createFields["Buyer ID"] = [mainBuyerRecord.id];
     }
 
     /*
-      Partner pairs: claimed in Supabase first, so a sale coming in at the
-      same moment cannot also take them, then made into Forwarding units.
-      If Airtable fails half way, the pairs go back on the shelf and the units
-      that were made are set Inactive rather than left dangling.
+      Partner pairs: one forward in Supabase, no Inventory Units and no row in
+      the Airtable Forwarding Service Log. The portal takes the pairs off the
+      shelf and writes the forward in one go, or refuses and changes nothing.
     */
-    let partnerUnits = [];
-
     if (partnerPairIds.length) {
-      const claim = await callPortal("/api/internal/partner-stock/forward", {
-        seller_record_id: sellerId,
-        ids: partnerPairIds,
-        ref: "WMS outbound"
-      });
+      const stored = await storeLabelFiles(labelFiles, "forwarding");
+      const buyerDetails = mainBuyerRecord ? await describeMainBuyer(mainBuyerRecord.id) : null;
 
-      if (!claim.ok) {
-        return res.status(claim.httpStatus === 409 ? 409 : 400).json({
-          error: (claim.errors || []).join(" ") || "Partner pairs could not be claimed"
+      const data = await callPortal("/api/internal/forwarding/create", {
+        seller_record_id: sellerId,
+        pair_ids: partnerPairIds,
+        shipping_costs: shippingCosts,
+        labels_needed: shippingLabels,
+        tracking_numbers: trackingNumbers,
+        labels: stored,
+        buyer: mainBuyerRecord
+          ? {
+              record_id: mainBuyerRecord.id,
+              buyer_id: buyerIdValue,
+              name: buyerDetails?.name || "",
+              country: buyerDetails?.country || ""
+            }
+          : null
+      }, { timeoutMs: 60000 });
+
+      if (!data?.ok) {
+        return res.status(data?.httpStatus === 409 ? 409 : 400).json({
+          error: (data?.errors || []).join(" ") || "The forward could not be created"
         });
       }
 
-      try {
-        partnerUnits = await createForwardingUnitsForPartnerPairsOrUndo(claim.pairs, sellerId);
-      } catch (unitError) {
-        await callPortal("/api/internal/partner-stock/undo-forward", { ids: partnerPairIds }).catch((err) =>
-          console.error("submit-outbound: partner pairs NOT put back:", partnerPairIds, err.message)
-        );
-
-        throw unitError;
-      }
+      return res.status(200).json({
+        ok: true,
+        id: data.forward.id,
+        forwarding_id: data.forward.display_id,
+        partner_pairs_forwarded: data.pairs.length,
+        shipping_status: data.forward.shipping_status
+      });
     }
 
-    createFields["Linked Inventory Units"] = [
-      ...airtableUnitIds,
-      ...partnerUnits.map((unit) => unit.unitId)
-    ];
+    // Old Airtable units: the Forwarding Service Log, as before.
+    const forwardingUnitFees = items
+      .map((item) => Number(item?.unit_forwarding_fee))
+      .filter((value) => Number.isFinite(value));
 
-    let createdRecord;
+    const averageForwardingFee = forwardingUnitFees.length
+      ? forwardingUnitFees.reduce((sum, value) => sum + value, 0) / forwardingUnitFees.length
+      : 0;
 
-    try {
-      createdRecord = await airtable(AIRTABLE_FORWARDING_SERVICE_LOG_TABLE).create(createFields);
-    } catch (logError) {
-      if (partnerPairIds.length) {
-        await callPortal("/api/internal/partner-stock/undo-forward", { ids: partnerPairIds }).catch((err) =>
-          console.error("submit-outbound: partner pairs NOT put back:", partnerPairIds, err.message)
-        );
+    const { fields: forwardingShippingFields } = await shippingFieldsFor("forwarding");
 
-        await deactivateInventoryUnits(partnerUnits.map((unit) => unit.unitId)).catch((err) =>
-          console.error("submit-outbound: partner units NOT deactivated:", err.message)
-        );
-      }
+    const createFields = {
+      "Seller ID": [sellerId],
+      "Linked Inventory Units": airtableUnitIds,
+      "Shipping Costs": shippingCosts,
+      "Amount of Labels": shippingLabels,
+      "Unit Forwarding Fee": averageForwardingFee,
+      "Forwarding Date": new Date().toISOString().split("T")[0],
+      ...forwardingShippingFields
+    };
 
-      throw logError;
-    }
+    if (mainBuyerRecord) createFields["Buyer ID"] = [mainBuyerRecord.id];
+
+    const createdRecord = await airtable(AIRTABLE_FORWARDING_SERVICE_LOG_TABLE).create(createFields);
 
     await updateInventoryUnitsToForwardPending(airtableUnitIds);
-
-    if (partnerUnits.length) {
-      await callPortal("/api/internal/partner-stock/link-units", {
-        links: partnerUnits.map((unit) => ({
-          id: unit.pairId,
-          inventory_unit_id: unit.unitId,
-          forwarded_ref: createdRecord.id
-        }))
-      }).catch((err) => console.error("submit-outbound: partner pairs not linked to units:", err.message));
-    }
 
     return res.status(200).json({
       ok: true,
       id: createdRecord.id,
-      linked_inventory_units_count: createFields["Linked Inventory Units"].length,
-      partner_pairs_forwarded: partnerUnits.length
+      linked_inventory_units_count: airtableUnitIds.length
     });
   } catch (error) {
     console.error("submit-outbound failed:", error);
-    return res.status(500).json({
-      error: "Failed to submit outbound",
+    return res.status(error.statusCode || 500).json({
+      error: error.statusCode ? error.message : "Failed to submit outbound",
       details: error.message
     });
   }
 });
+
+/*
+ * Name and country of a main-base buyer, kept on the forward so the Admin
+ * portal can show it without a round trip to Airtable.
+ */
+async function describeMainBuyer(recordId) {
+  try {
+    const record = await airtable(AIRTABLE_BUYERS_TABLE).find(recordId);
+    const f = record.fields || {};
+    const pick = (...names) => {
+      for (const name of names) {
+        const value = Array.isArray(f[name]) ? f[name][0] : f[name];
+        if (asText(value)) return asText(value);
+      }
+      return "";
+    };
+
+    return {
+      name: pick("Full Name", "Company Name", "Buyer Name", "Name"),
+      country: pick("Country", "Buyer Country")
+    };
+  } catch (error) {
+    console.error("describeMainBuyer failed:", recordId, error.message);
+    return null;
+  }
+}
 
 /*
  * A label for a marketplace sale, made by us.

@@ -235,6 +235,58 @@
     .summary-bottom {
       margin-top: 16px;
     }
+
+    .tracking-block {
+      margin-top: 16px;
+      padding: 16px;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .tracking-block-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 12px;
+    }
+
+    .tracking-block-title {
+      font-size: 15px;
+      font-weight: 800;
+    }
+
+    .tracking-block-hint {
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .tracking-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .tracking-row input[type="file"] {
+      color: var(--muted);
+      font-size: 13px;
+      min-width: 0;
+    }
+
+    .tracking-remove {
+      width: auto;
+      margin-top: 0;
+      padding: 10px 14px;
+    }
+
+    .tracking-add {
+      width: auto;
+      align-self: flex-start;
+      margin-top: 0;
+    }
     
     .summary-stack {
       display: flex;
@@ -535,6 +587,15 @@
               <span id="resultValue" class="summary-line-value">€0.00</span>
             </div>
           </div>
+        </div>
+
+        <div class="tracking-block">
+          <div class="tracking-block-head">
+            <span class="tracking-block-title">Tracking &amp; labels</span>
+            <span class="tracking-block-hint">Optional. Filled in now, the outbound is Ready to Ship at once. Several numbers can be pasted at once, separated by commas.</span>
+          </div>
+          <div id="trackingRows"></div>
+          <button id="addTrackingBtn" class="button secondary tracking-add" type="button">+ Tracking</button>
         </div>
 
         <div class="actions">
@@ -1008,7 +1069,100 @@
       showToast(`Buyer ${data.option.label} created.`, "success", "Success");
     }
 
+    /*
+     * Tracking numbers and label PDFs, one row each.
+     *
+     * A row holds one tracking number and, if there is one, its label. Paste
+     * "123, 456, 789" into a row and it becomes three rows when the field is
+     * left, so a list copied from a carrier goes in as it is.
+     */
+    const trackingRows = document.getElementById("trackingRows");
+
+    function addTrackingRow(value = "") {
+      const row = document.createElement("div");
+      row.className = "tracking-row";
+      row.innerHTML = `
+        <input class="input tracking-input" type="text" placeholder="Tracking number" autocomplete="off" />
+        <input class="tracking-file" type="file" accept="application/pdf" aria-label="Label PDF" />
+        <button class="button secondary tracking-remove" type="button" aria-label="Remove this tracking row">✕</button>
+      `;
+
+      row.querySelector(".tracking-input").value = value;
+      trackingRows.appendChild(row);
+      return row;
+    }
+
+    function resetTrackingRows() {
+      trackingRows.innerHTML = "";
+      addTrackingRow();
+    }
+
+    trackingRows.addEventListener("change", (event) => {
+      const input = event.target;
+      if (!input.classList?.contains("tracking-input")) return;
+
+      const parts = input.value.split(/[\s,;]+/).map((part) => part.trim()).filter(Boolean);
+      if (parts.length < 2) return;
+
+      input.value = parts[0];
+      let after = input.closest(".tracking-row");
+
+      for (const part of parts.slice(1)) {
+        const row = addTrackingRow(part);
+        after.after(row);
+        after = row;
+      }
+    });
+
+    trackingRows.addEventListener("click", (event) => {
+      const button = event.target.closest(".tracking-remove");
+      if (!button) return;
+
+      button.closest(".tracking-row").remove();
+      if (!trackingRows.children.length) addTrackingRow();
+    });
+
+    document.getElementById("addTrackingBtn").addEventListener("click", () => {
+      addTrackingRow().querySelector(".tracking-input").focus();
+    });
+
+    function readFileAsDataUrl(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(new Error(`Could not read ${file.name}`));
+        reader.readAsDataURL(file);
+      });
+    }
+
+    async function collectTracking() {
+      const trackingNumbers = [];
+      const labelFiles = [];
+
+      for (const row of trackingRows.querySelectorAll(".tracking-row")) {
+        const tracking = row.querySelector(".tracking-input").value.trim();
+        const file = row.querySelector(".tracking-file").files[0];
+
+        if (tracking) trackingNumbers.push(tracking);
+
+        if (file) {
+          if (file.type && file.type !== "application/pdf") {
+            throw new Error(`${file.name} is not a PDF.`);
+          }
+
+          labelFiles.push({
+            filename: file.name,
+            tracking,
+            data_url: await readFileAsDataUrl(file)
+          });
+        }
+      }
+
+      return { trackingNumbers, labelFiles };
+    }
+
     function resetPage() {
+      resetTrackingRows();
       items = [];
       outboundMode = "Selling";
       scanInput.value = "";
@@ -1181,10 +1335,17 @@
       }
 
       try {
+        const { trackingNumbers, labelFiles } = await collectTracking();
+
+        submitBtn.disabled = true;
+        submitBtn.textContent = "Submitting...";
+
         const response = await fetch("/api/submit-outbound", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
+            tracking_numbers: trackingNumbers,
+            label_files: labelFiles,
             mode: outboundMode,
             buyer_id: buyerSelect.value === "unknown" ? "" : buyerSelect.value,
             seller_id: sellerSelect.value,
@@ -1209,17 +1370,23 @@
         showToast(
           outboundMode === "Selling"
             ? "Outbound created successfully."
-            : "Forwarding outbound created successfully.",
+            : data.forwarding_id
+              ? `Forward ${data.forwarding_id} created${data.shipping_status === "ready_to_ship" ? ", Ready to Ship" : ", waiting for a label"}.`
+              : "Forwarding outbound created successfully.",
           "success",
           "Success"
         );
         resetPage();
       } catch (error) {
         showToast(error.message, "error", "Error");
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Submit";
       }
     });
     syncModeUI();
     renderTable();
+    resetTrackingRows();
 
     Promise.all([loadBuyers(), loadBuyerCountryOptions(), loadForwardingSellers()])
       .then(() => {
