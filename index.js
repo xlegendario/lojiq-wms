@@ -4,6 +4,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import Airtable from "airtable";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import { PDFDocument } from "pdf-lib";
 import returnsRouter from "./src/routes/returns.js";
 
 dotenv.config();
@@ -629,6 +630,27 @@ function trackingList(value) {
  * rather than stored, because a label that will not print is found out at
  * the moment the parcel has to go.
  */
+/*
+ * A label that arrives as a photo or screenshot, as a one-page PDF.
+ *
+ * Carriers and partners send JPEG and PNG labels as often as PDFs, and
+ * everything after this - R2, Pack & Ship, printing - expects a PDF. The page
+ * is the image's own size, so nothing is scaled.
+ */
+async function imageLabelToPdf(dataUrl) {
+  const match = asText(dataUrl).match(/^data:image\/(jpeg|jpg|png);base64,(.+)$/i);
+  if (!match) return null;
+
+  const bytes = Buffer.from(match[2], "base64");
+  const pdf = await PDFDocument.create();
+  const image = /png/i.test(match[1]) ? await pdf.embedPng(bytes) : await pdf.embedJpg(bytes);
+  const page = pdf.addPage([image.width, image.height]);
+
+  page.drawImage(image, { x: 0, y: 0, width: image.width, height: image.height });
+
+  return Buffer.from(await pdf.save());
+}
+
 async function storeLabelFiles(files, folder) {
   const stored = [];
 
@@ -636,16 +658,19 @@ async function storeLabelFiles(files, folder) {
     let buffer = null;
 
     try {
-      buffer = pdfBufferFromDataUrl(asText(file?.data_url));
+      buffer = (await imageLabelToPdf(file?.data_url)) || pdfBufferFromDataUrl(asText(file?.data_url));
     } catch {
       buffer = null;
     }
 
     if (!buffer || buffer.length < 100 || buffer.subarray(0, 5).toString("latin1") !== "%PDF-") {
-      throw Object.assign(new Error(`Label ${index + 1} is not a PDF file`), { statusCode: 400 });
+      throw Object.assign(new Error(`Label ${index + 1} is not a PDF, JPEG or PNG file`), { statusCode: 400 });
     }
 
-    const name = sanitizeFileName(asText(file?.filename) || `label-${index + 1}.pdf`);
+    // A converted image keeps its name with .pdf on the end.
+    const name = sanitizeFileName(
+      (asText(file?.filename) || `label-${index + 1}.pdf`).replace(/\.(jpe?g|png)$/i, ".pdf")
+    );
     const key = `${folder}/${Date.now()}-${index + 1}-${name}`;
     const url = await uploadPdfToR2({ key, pdfBuffer: buffer });
 
