@@ -613,11 +613,14 @@ async function updateInventoryUnitsToReserved(recordIds) {
 function trackingList(value) {
   const raw = Array.isArray(value) ? value.join(",") : asText(value);
 
+  // One per line or separated by commas - never by spaces: a UPS number is
+  // often typed with them ("1Z FV6 483 68 2567 1031") and must stay one
+  // number. The spaces inside it are dropped.
   return [
     ...new Set(
       raw
-        .split(/[\s,;]+/)
-        .map((part) => part.trim())
+        .split(/[,;\r\n]+/)
+        .map((part) => part.replace(/\s+/g, ""))
         .filter(Boolean)
     )
   ];
