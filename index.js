@@ -3984,11 +3984,16 @@ app.post("/api/submit-outbound", async (req, res) => {
 
       if (trackingNumbers.length) {
         fields["Tracking Numbers"] = trackingNumbers.join(", ");
-        fields["Shipping Status"] = "Ready to Ship";
       }
 
       if (stored.length) {
         fields["Shipping Labels"] = stored.map((file) => ({ url: file.url, filename: file.filename }));
+      }
+
+      // A label alone is something to ship with too - the same rule as the
+      // admin's Forward Service and External Sales.
+      if (trackingNumbers.length || stored.length) {
+        fields["Shipping Status"] = "Ready to Ship";
       }
 
       return { fields, stored };
