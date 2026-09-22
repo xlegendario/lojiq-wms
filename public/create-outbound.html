@@ -617,6 +617,7 @@
             <label class="field-label" for="paymentMethod">Payment</label>
             <select id="paymentMethod">
               <option value="bank_transfer" selected>Bank transfer (the invoice asks for it)</option>
+              <option value="payment_link">Payment link (Mollie, in the invoice mail)</option>
               <option value="paid">Already paid</option>
             </select>
             <input id="paidAtInput" class="input" type="date" hidden aria-label="Paid on" />
@@ -1506,7 +1507,7 @@
             payment: newSelling()
               ? (paymentMethod.value === "paid"
                   ? { method: "paid", paid_at: paidAtInput.value, note: paidNoteInput.value.trim() }
-                  : { method: "bank_transfer" })
+                  : { method: paymentMethod.value === "payment_link" ? "payment_link" : "bank_transfer" })
               : undefined,
             mail: newSelling() ? mailInvoice.checked : undefined,
             shipping_labels: shippingLabelsValue,

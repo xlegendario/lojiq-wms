@@ -1011,7 +1011,9 @@ async function isWarehouseItem(inventoryRecord) {
 }
 
 async function getPackShipOutboundOptions() {
-  const salesRecords = await airtable(AIRTABLE_EXTERNAL_SALES_LOG_TABLE)
+  // With External Sales in Supabase every sale - also the ones that started in
+  // the Airtable log - is packed from there, so the log is not asked.
+  const salesRecords = EXTERNAL_SALES_IN_SUPABASE ? [] : await airtable(AIRTABLE_EXTERNAL_SALES_LOG_TABLE)
     .select({
       fields: [
         "External Deal ID",
