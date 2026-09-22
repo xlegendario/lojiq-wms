@@ -579,7 +579,7 @@
               <span id="itemsTotalValue" class="summary-line-value">€0.00</span>
             </div>
         
-            <div class="summary-line">
+            <div class="summary-line" id="shippingLabelsRow">
               <span class="summary-line-label">Shipping Labels:</span>
               <input id="shippingLabelsInput" class="input summary-line-input" type="number" min="0" step="1" />
             </div>
@@ -616,9 +616,9 @@
           <div class="sale-payment">
             <label class="field-label" for="paymentMethod">Payment</label>
             <select id="paymentMethod">
-              <option value="bank_transfer" selected>Bank transfer (the invoice asks for it)</option>
-              <option value="payment_link">Payment link (Mollie, in the invoice mail)</option>
-              <option value="paid">Already paid</option>
+              <option value="bank_transfer" selected>Bank Transfer</option>
+              <option value="payment_link">Mollie</option>
+              <option value="paid">Already Paid</option>
             </select>
             <input id="paidAtInput" class="input" type="date" hidden aria-label="Paid on" />
             <input id="paidNoteInput" class="input" type="text" placeholder="How it was paid (cash, transfer...)" hidden />
@@ -689,6 +689,7 @@
     // preview per pair, a payment choice, tracking on every label.
     let salesInSupabase = false;
     const shippingCostsRow = document.getElementById("shippingCostsRow");
+    const shippingLabelsRow = document.getElementById("shippingLabelsRow");
     const salePreview = document.getElementById("salePreview");
     const salePreviewHint = document.getElementById("salePreviewHint");
     const saleProblems = document.getElementById("saleProblems");
@@ -876,6 +877,9 @@
         totalSellingPriceRow.style.display = "";
         resultRow.style.display = salesInSupabase ? "none" : "";
         shippingCostsRow.style.display = salesInSupabase ? "none" : "";
+        // How many labels there are is the number of parcels entered below;
+        // asking for it as well only invites the two to disagree.
+        shippingLabelsRow.style.display = salesInSupabase ? "none" : "";
         salePreview.hidden = !salesInSupabase;
         trackingHint.textContent = salesInSupabase
           ? "Every label needs its tracking number. Filled in now, the sale is Ready to Ship at once."
@@ -891,6 +895,7 @@
         totalSellingPriceRow.style.display = "none";
         resultRow.style.display = "";
         shippingCostsRow.style.display = "";
+        shippingLabelsRow.style.display = "";
         salePreview.hidden = true;
       }
     }
@@ -1460,7 +1465,7 @@
 
       const shippingLabelsValue = Number(shippingLabelsInput.value);
 
-      if (shippingLabelsInput.value === "" || Number.isNaN(shippingLabelsValue) || shippingLabelsValue < 0) {
+      if (!newSelling() && (shippingLabelsInput.value === "" || Number.isNaN(shippingLabelsValue) || shippingLabelsValue < 0)) {
         showToast("Please fill Shipping Labels Needed.", "warning", "Warning");
         return;
       }
@@ -1510,7 +1515,8 @@
                   : { method: paymentMethod.value === "payment_link" ? "payment_link" : "bank_transfer" })
               : undefined,
             mail: newSelling() ? mailInvoice.checked : undefined,
-            shipping_labels: shippingLabelsValue,
+            // A sale counts its own parcels; a forward is told how many to expect.
+            shipping_labels: newSelling() ? trackingNumbers.length : shippingLabelsValue,
             items: items.map((item) => ({
               quantity: item.quantity,
               inventory_unit_ids: item.inventoryUnitIds,
