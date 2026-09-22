@@ -452,7 +452,19 @@
     .mode-button {
       flex: 1;
     }
-  </style>
+    .sale-preview { margin-top: 18px; padding: 14px; border: 1px solid rgba(127,127,127,0.35); border-radius: 10px; display: grid; gap: 10px; }
+  .sale-preview[hidden] { display: none; }
+  .sale-preview-head { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: baseline; }
+  .sale-problems { margin: 0; padding-left: 18px; color: #e5484d; display: grid; gap: 4px; }
+  .sale-problems:empty { display: none; }
+  .sale-payment { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .sale-payment select, .sale-payment .input { width: auto; min-width: 180px; }
+  .sale-mail { display: inline-flex; gap: 6px; align-items: center; }
+  .sale-total td { font-weight: 700; }
+  .profit-neg { color: #e5484d; }
+  .sale-preview table { min-width: 0; }
+  .sale-preview .muted { color: var(--muted); font-size: 12px; }
+</style>
 </head>
 <body>
   <div class="topbar">
@@ -572,7 +584,7 @@
               <input id="shippingLabelsInput" class="input summary-line-input" type="number" min="0" step="1" />
             </div>
         
-            <div class="summary-line">
+            <div class="summary-line" id="shippingCostsRow">
               <span class="summary-line-label">Shipping Costs:</span>
               <input id="shippingCostsInput" class="input summary-line-input" type="number" min="0" step="1" />
             </div>
@@ -589,10 +601,34 @@
           </div>
         </div>
 
+        <div class="sale-preview" id="salePreview" hidden>
+          <div class="sale-preview-head">
+            <span class="tracking-block-title">This sale</span>
+            <span class="tracking-block-hint" id="salePreviewHint">Choose the buyer, add pairs and enter the total.</span>
+          </div>
+          <ul class="sale-problems" id="saleProblems"></ul>
+          <div class="table-wrap" id="salePairsWrap" hidden>
+            <table>
+              <thead><tr><th>Pair</th><th>VAT</th><th>Purchase</th><th>Sold for</th><th>Profit</th></tr></thead>
+              <tbody id="salePairs"></tbody>
+            </table>
+          </div>
+          <div class="sale-payment">
+            <label class="field-label" for="paymentMethod">Payment</label>
+            <select id="paymentMethod">
+              <option value="bank_transfer" selected>Bank transfer (the invoice asks for it)</option>
+              <option value="paid">Already paid</option>
+            </select>
+            <input id="paidAtInput" class="input" type="date" hidden aria-label="Paid on" />
+            <input id="paidNoteInput" class="input" type="text" placeholder="How it was paid (cash, transfer...)" hidden />
+            <label class="sale-mail"><input id="mailInvoice" type="checkbox" checked /> Mail the invoice to the buyer</label>
+          </div>
+        </div>
+
         <div class="tracking-block">
           <div class="tracking-block-head">
             <span class="tracking-block-title">Tracking &amp; labels</span>
-            <span class="tracking-block-hint">Optional. Filled in now, the outbound is Ready to Ship at once. Several numbers can be pasted at once, separated by commas.</span>
+            <span class="tracking-block-hint" id="trackingHint">Optional. Filled in now, the outbound is Ready to Ship at once. Several numbers can be pasted at once, separated by commas.</span>
           </div>
           <div id="trackingRows"></div>
           <button id="addTrackingBtn" class="button secondary tracking-add" type="button">+ Tracking</button>
@@ -648,6 +684,21 @@
     const toastStack = document.getElementById("toastStack");
 
     let outboundMode = "Selling";
+    // Selling through the Lojiq portal (Supabase): no shipping costs, a
+    // preview per pair, a payment choice, tracking on every label.
+    let salesInSupabase = false;
+    const shippingCostsRow = document.getElementById("shippingCostsRow");
+    const salePreview = document.getElementById("salePreview");
+    const salePreviewHint = document.getElementById("salePreviewHint");
+    const saleProblems = document.getElementById("saleProblems");
+    const salePairsWrap = document.getElementById("salePairsWrap");
+    const salePairs = document.getElementById("salePairs");
+    const paymentMethod = document.getElementById("paymentMethod");
+    const paidAtInput = document.getElementById("paidAtInput");
+    const paidNoteInput = document.getElementById("paidNoteInput");
+    const mailInvoice = document.getElementById("mailInvoice");
+    const trackingHint = document.getElementById("trackingHint");
+    const newSelling = () => salesInSupabase && outboundMode === "Selling";
     let items = [];
     let buyers = [];
     let forwardingSellers = [];
@@ -822,7 +873,12 @@
         unitPriceHeader.textContent = "Unit Price";
         totalPriceHeader.textContent = "Total Price";
         totalSellingPriceRow.style.display = "";
-        resultRow.style.display = "";
+        resultRow.style.display = salesInSupabase ? "none" : "";
+        shippingCostsRow.style.display = salesInSupabase ? "none" : "";
+        salePreview.hidden = !salesInSupabase;
+        trackingHint.textContent = salesInSupabase
+          ? "Every label needs its tracking number. Filled in now, the sale is Ready to Ship at once."
+          : "Optional. Filled in now, the outbound is Ready to Ship at once. Several numbers can be pasted at once, separated by commas.";
       } else {
         sellingBtn.className = "button secondary mode-button";
         forwardingBtn.className = "button mode-button";
@@ -833,10 +889,75 @@
         totalPriceHeader.textContent = "Total Fee";
         totalSellingPriceRow.style.display = "none";
         resultRow.style.display = "";
+        shippingCostsRow.style.display = "";
+        salePreview.hidden = true;
       }
     }
 
+    const euro = (n) => `€${Number(n || 0).toFixed(2)}`;
+    let previewTimer = null;
+    let previewSeq = 0;
+
+    function schedulePreview() {
+      if (!newSelling()) return;
+      clearTimeout(previewTimer);
+      previewTimer = setTimeout(loadPreview, 350);
+    }
+
+    async function loadPreview() {
+      const seq = ++previewSeq;
+      if (!items.length && !buyerSelect.value && !totalSellingPriceInput.value) {
+        saleProblems.innerHTML = "";
+        salePairsWrap.hidden = true;
+        salePreviewHint.textContent = "Choose the buyer, add pairs and enter the total.";
+        return;
+      }
+      try {
+        const response = await fetch("/api/outbound-preview", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            buyer_id: buyerSelect.value === "unknown" ? "" : buyerSelect.value,
+            total_selling_price: Number(totalSellingPriceInput.value) || 0,
+            items: items.map((item) => ({ quantity: item.quantity, inventory_unit_ids: item.inventoryUnitIds }))
+          })
+        });
+        const data = await response.json();
+        if (seq !== previewSeq) return;
+        if (!response.ok) throw new Error(data.error || "No preview");
+        drawPreview(data.preview);
+      } catch (error) {
+        if (seq !== previewSeq) return;
+        saleProblems.innerHTML = `<li>${escapeHtml(error.message)}</li>`;
+      }
+    }
+
+    function drawPreview(p) {
+      saleProblems.innerHTML = (p.problems || []).map((x) => `<li>${escapeHtml(x)}</li>`).join("");
+      const pairs = p.pairs || [];
+      salePairsWrap.hidden = !pairs.length;
+      salePairs.innerHTML = pairs.map((pair) => `
+        <tr>
+          <td>${escapeHtml(pair.product_name || pair.sku || "")}<div class="muted">${escapeHtml(pair.sku || "")} · ${escapeHtml(pair.size || "")} · ${escapeHtml(pair.item_id || "")}</div></td>
+          <td>${escapeHtml(pair.selling_vat_type || "?")}</td>
+          <td>${euro(pair.purchase_price_ex_vat)}</td>
+          <td>${euro(pair.selling_price)}</td>
+          <td class="${pair.profit < 0 ? "profit-neg" : ""}">${pair.profit === null ? "?" : euro(pair.profit)}</td>
+        </tr>`).join("") + (pairs.length ? `
+        <tr class="sale-total">
+          <td>${pairs.length} ${pairs.length === 1 ? "pair" : "pairs"}</td>
+          <td>${p.totals.invoices > 1 ? `${p.totals.invoices} invoices` : ""}</td>
+          <td>${euro(p.totals.purchase)}</td>
+          <td>${euro(p.totals.selling)}</td>
+          <td class="${(p.totals.profit || 0) < 0 ? "profit-neg" : ""}">${p.totals.profit === null ? "?" : euro(p.totals.profit)}</td>
+        </tr>` : "");
+      salePreviewHint.textContent = p.ok
+        ? "Ready: submitting makes the sale, reserves the pairs and sends the invoice."
+        : "Not ready yet - see below.";
+    }
+
     function renderSummaryTotals() {
+      schedulePreview();
       const itemsTotal = getItemsTotal();
       const shippingCosts = Number(shippingCostsInput.value) || 0;
       const totalSellingPrice = Number(totalSellingPriceInput.value) || 0;
@@ -1111,7 +1232,9 @@
       const input = event.target;
       if (!input.classList?.contains("tracking-input")) return;
 
-      const parts = input.value.split(/[\s,;]+/).map((part) => part.trim()).filter(Boolean);
+      // Separated by commas, semicolons or lines - never by spaces: a UPS
+      // number is often typed with them ("1Z FV6 483 68 2567 1031").
+      const parts = input.value.split(/[,;\n]+/).map((part) => part.replace(/\s+/g, "")).filter(Boolean);
       if (parts.length < 2) return;
 
       input.value = parts[0];
@@ -1150,8 +1273,11 @@
       const labelFiles = [];
 
       for (const row of trackingRows.querySelectorAll(".tracking-row")) {
-        const tracking = row.querySelector(".tracking-input").value.trim();
+        const tracking = row.querySelector(".tracking-input").value.replace(/\s+/g, "");
         const file = row.querySelector(".tracking-file").files[0];
+        if (file && !tracking && newSelling()) {
+          throw new Error(`${file.name} has no tracking number. Every label needs one.`);
+        }
 
         if (tracking) trackingNumbers.push(tracking);
 
@@ -1181,6 +1307,14 @@
       shippingLabelsInput.value = "";
       totalSellingPriceInput.value = "";
       shippingCostsInput.value = "";
+      paymentMethod.value = "bank_transfer";
+      paidAtInput.value = "";
+      paidNoteInput.value = "";
+      paidAtInput.hidden = true;
+      paidNoteInput.hidden = true;
+      mailInvoice.checked = true;
+      saleProblems.innerHTML = "";
+      salePairsWrap.hidden = true;
       sellerSelect.value = "";
       buyerSelect.value = "";
       buyerDetails.className = "buyer-details";
@@ -1227,6 +1361,7 @@
 
     buyerSelect.addEventListener("change", () => {
       renderBuyerDetails();
+      schedulePreview();
       scanInput.focus();
     });
 
@@ -1304,6 +1439,13 @@
     shippingCostsInput.addEventListener("input", renderSummaryTotals);
     totalSellingPriceInput.addEventListener("input", renderSummaryTotals);
 
+    paymentMethod.addEventListener("change", () => {
+      const paid = paymentMethod.value === "paid";
+      paidAtInput.hidden = !paid;
+      paidNoteInput.hidden = !paid;
+      if (paid && !paidAtInput.value) paidAtInput.value = new Date().toISOString().slice(0, 10);
+    });
+
     submitBtn.addEventListener("click", async () => {
       if (outboundMode === "Forwarding" && !sellerSelect.value) {
         showToast("Please select a Seller first.", "warning", "Warning");
@@ -1322,7 +1464,7 @@
         return;
       }
 
-      if (shippingCostsInput.value === "") {
+      if (!newSelling() && shippingCostsInput.value === "") {
         showToast("Please fill Shipping Costs.", "warning", "Warning");
         return;
       }
@@ -1360,7 +1502,13 @@
             buyer_id: buyerSelect.value === "unknown" ? "" : buyerSelect.value,
             seller_id: sellerSelect.value,
             total_selling_price: Number(totalSellingPriceInput.value) || 0,
-            shipping_costs: Number(shippingCostsInput.value) || 0,
+            shipping_costs: newSelling() ? 0 : Number(shippingCostsInput.value) || 0,
+            payment: newSelling()
+              ? (paymentMethod.value === "paid"
+                  ? { method: "paid", paid_at: paidAtInput.value, note: paidNoteInput.value.trim() }
+                  : { method: "bank_transfer" })
+              : undefined,
+            mail: newSelling() ? mailInvoice.checked : undefined,
             shipping_labels: shippingLabelsValue,
             items: items.map((item) => ({
               quantity: item.quantity,
@@ -1375,6 +1523,16 @@
 
         if (!response.ok) {
           throw new Error(data.details || data.error || "Failed to submit outbound");
+        }
+
+        if (newSelling() && data.deal) {
+          if (data.invoice_error) {
+            showToast(`${data.deal} made, but the invoice failed: ${data.invoice_error}. Retry it from the admin.`, "warning", "Sale made");
+          } else {
+            showToast(`${data.deal} made. ${(data.invoice_log || []).filter((line) => /^Invoice|^Mailed|NOT mailed/.test(line)).join(" · ")}`, "success", "Sale made");
+          }
+          resetPage();
+          return;
         }
 
         showToast(
@@ -1397,6 +1555,14 @@
     syncModeUI();
     renderTable();
     resetTrackingRows();
+
+    fetch("/api/outbound-config")
+      .then((response) => response.json())
+      .then((config) => {
+        salesInSupabase = Boolean(config.external_sales_in_supabase);
+        syncModeUI();
+      })
+      .catch(() => {});
 
     Promise.all([loadBuyers(), loadBuyerCountryOptions(), loadForwardingSellers()])
       .then(() => {

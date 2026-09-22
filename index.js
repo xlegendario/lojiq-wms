@@ -811,6 +811,49 @@ async function findIncomingStockByGTIN(gtin) {
  * The portal knows what the WMS does not: bol_barcodes, SKU Master and the
  * StockX catalog. Same secret as the Lojiq bot call below.
  */
+/*
+ * External Sales in Supabase (block 2 and 3 of the plan, 22-09-2026).
+ *
+ * With EXTERNAL_SALES_IN_SUPABASE=true a Selling outbound is made by the
+ * Lojiq portal - deal, pairs and parcels in Supabase, units Reserved, the
+ * invoice made and mailed - instead of a row in the Airtable External Sales
+ * Log. Unset or anything else: everything as before. Pack & Ship shows the
+ * Supabase deals either way; there are none until the switch is on.
+ */
+const EXTERNAL_SALES_IN_SUPABASE = String(process.env.EXTERNAL_SALES_IN_SUPABASE || "").trim().toLowerCase() === "true";
+const LOJIQ_PORTAL_BASE_URL = String(process.env.LOJIQ_PORTAL_BASE_URL || "https://lojiq-client-portal.onrender.com").replace(/\/$/, "");
+
+// The Lojiq portal, with the secret the WMS already shares with the portals.
+async function callLojiq(pathName, body, { timeoutMs = 60000 } = {}) {
+  const secret = process.env.COUNTER_OFFERS_SECRET;
+  if (!secret) throw new Error("COUNTER_OFFERS_SECRET is not set on the WMS");
+
+  const response = await fetch(`${LOJIQ_PORTAL_BASE_URL}${pathName}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-kc-secret": secret },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(timeoutMs)
+  });
+
+  const data = await response.json().catch(() => ({}));
+  return { ...data, httpStatus: response.status, ok: response.ok && data.ok !== false };
+}
+
+// One parcel per label, carrying its tracking number; a tracking number
+// without a label is a parcel too.
+function parcelsFrom(stored, trackingNumbers) {
+  const parcels = stored.map((file) => ({
+    tracking_number: trackingList(file.tracking)[0] || null,
+    label_url: file.url,
+    label_filename: file.filename
+  }));
+  const onLabels = new Set(parcels.map((parcel) => parcel.tracking_number).filter(Boolean));
+  for (const tracking of trackingNumbers) {
+    if (!onLabels.has(tracking)) parcels.push({ tracking_number: tracking, label_url: null, label_filename: null });
+  }
+  return parcels;
+}
+
 async function callPortal(pathName, body, { timeoutMs = 20000 } = {}) {
   const secret = process.env.COUNTER_OFFERS_SECRET;
 
@@ -1072,6 +1115,23 @@ async function getPackShipOutboundOptions() {
   }
 
   forwardingOptions.push(...supabaseForwardOptions);
+
+  // External Sales made in Supabase. A portal that does not answer must not
+  // take the rest of Pack & Ship down with it.
+  try {
+    const data = await callLojiq("/api/internal/external-sales/pack-ship/list", {}, { timeoutMs: 20000 });
+    for (const sale of data?.sales || []) {
+      salesOptions.push({
+        id: sale.id,
+        source_table: "external_sales",
+        label: `${sale.deal} - ${sale.buyer || "Unknown Buyer"}`,
+        shipping_status: "Ready to Ship",
+        tracking_numbers_count: sale.tracking_count
+      });
+    }
+  } catch (error) {
+    console.error("pack-ship: external sales from Supabase not loaded:", error.message);
+  }
 
   const unfulfilledInventoryIds = [
     ...new Set(
@@ -2121,6 +2181,21 @@ async function getPackShipOutboundDetails(outboundId, sourceTable) {
         ? firstLabelRecord.fields["Shipping Label"]
         : [],
       items
+    };
+  }
+
+  if (sourceTable === "external_sales") {
+    const data = await callLojiq("/api/internal/external-sales/pack-ship/get", { id: outboundId }, { timeoutMs: 20000 });
+
+    if (!data.ok || !data.sale) throw new Error(data.error || "Sale not found");
+
+    return {
+      id: data.sale.id,
+      source_table: "external_sales",
+      shipping_status: data.sale.shipping_status === "ready_to_ship" ? "Ready to Ship" : data.sale.shipping_status,
+      tracking_numbers: data.sale.tracking_numbers || [],
+      shipping_labels: data.sale.labels || [],
+      items: data.sale.items || []
     };
   }
 
@@ -3485,6 +3560,20 @@ app.post("/api/submit-pack-ship", async (req, res) => {
       });
     }
 
+    if (sourceTable === "external_sales") {
+      const data = await callLojiq("/api/internal/external-sales/pack-ship/ship", {
+        id: outboundId,
+        items_per_parcel: itemsPerParcel
+      }, { timeoutMs: 20000 });
+
+      if (!data.ok) {
+        return res.status(409).json({ error: data.error || "Could not ship this sale" });
+      }
+
+      await updateInventoryUnitsToSold(packedInventoryUnitIds);
+      return res.status(200).json({ ok: true });
+    }
+
     if (sourceTable === "forwarding_log") {
       const data = await callPortal("/api/internal/forwarding/ship", {
         id: outboundId,
@@ -3843,6 +3932,37 @@ app.post("/api/outbound-search-sku-size", async (req, res) => {
   }
 });
 
+// What the page needs to know: which Selling flow is on.
+app.get("/api/outbound-config", (_req, res) => {
+  res.json({ ok: true, external_sales_in_supabase: EXTERNAL_SALES_IN_SUPABASE });
+});
+
+// The sale as the portal will make it: price per pair, VAT, profit, and
+// everything that still blocks it. Nothing is written.
+app.post("/api/outbound-preview", async (req, res) => {
+  try {
+    const items = Array.isArray(req.body?.items) ? req.body.items : [];
+    const unitIds = items.flatMap((item) => {
+      const quantity = Number(item?.quantity);
+      const ids = Array.isArray(item?.inventory_unit_ids) ? item.inventory_unit_ids : [];
+      return Number.isInteger(quantity) && quantity > 0 ? ids.slice(0, quantity) : [];
+    });
+
+    const data = await callLojiq("/api/internal/external-sales/preview", {
+      buyer_id: asText(req.body?.buyer_id),
+      unit_ids: unitIds.filter((id) => !String(id).startsWith(PARTNER_PAIR_PREFIX)),
+      total_selling_price: Number(req.body?.total_selling_price) || 0,
+      parcels: Array.isArray(req.body?.parcels) ? req.body.parcels : []
+    }, { timeoutMs: 20000 });
+
+    if (!data.ok) return res.status(502).json({ error: data.error || "No preview" });
+    return res.json({ ok: true, preview: data.preview });
+  } catch (error) {
+    console.error("outbound-preview failed:", error);
+    return res.status(500).json({ error: "No preview", details: error.message });
+  }
+});
+
 app.post("/api/submit-outbound", async (req, res) => {
   try {
     const mode = asText(req.body?.mode);
@@ -3921,6 +4041,41 @@ app.post("/api/submit-outbound", async (req, res) => {
 
       return { fields, stored };
     };
+
+    if (mode === "Selling" && EXTERNAL_SALES_IN_SUPABASE) {
+      if (!buyerId) {
+        return res.status(400).json({ error: "Choose the buyer." });
+      }
+
+      // A label always has its tracking number: Aftership needs it.
+      const labelWithoutTracking = labelFiles.findIndex((file) => !trackingList(file?.tracking).length);
+      if (labelWithoutTracking >= 0) {
+        return res.status(400).json({ error: `Label ${labelWithoutTracking + 1} has no tracking number.` });
+      }
+
+      const stored = await storeLabelFiles(labelFiles, "external-sales");
+      const data = await callLojiq("/api/internal/external-sales/create", {
+        buyer_id: buyerId,
+        unit_ids: airtableUnitIds,
+        total_selling_price: totalSellingPrice,
+        labels_needed: shippingLabels,
+        parcels: parcelsFrom(stored, trackingNumbers),
+        payment: req.body?.payment || { method: "bank_transfer" },
+        mail: req.body?.mail !== false
+      });
+
+      if (!data.ok) {
+        return res.status(data.httpStatus >= 500 ? 502 : 400).json({ error: data.error || "The sale could not be made" });
+      }
+
+      return res.status(200).json({
+        ok: true,
+        id: data.id,
+        deal: data.deal,
+        invoice_log: data.invoice_log || [],
+        invoice_error: data.invoice_error || ""
+      });
+    }
 
     if (mode === "Selling") {
       if (!buyerId) {
