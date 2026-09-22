@@ -1374,51 +1374,38 @@ async function getInboundPartyOptions() {
   return [...sellerOptions, ...merchantOptions];
 }
 
-// A buyer is recognised by the business, not by its owner: "Company (Owner)",
-// or just the name for a private buyer.
-function buyerLabel(fields) {
-  const company = asText(fields["Company Name"]);
-  const person = asText(fields["Full Name"]);
-  if (company && person && company.toLowerCase() !== person.toLowerCase()) return `${company} (${person})`;
-  return company || person;
+/*
+ * Buyers come from Supabase public.buyers, through the portal (22-09-2026).
+ * They used to be read from the "Buyer Database" in a separate Airtable base
+ * and copied into the main base, and the two had drifted from Rompslomp. The
+ * option id is the Supabase buyer id; resolveBuyer turns it into what a deal
+ * needs.
+ */
+async function getBuyerOptions() {
+  const data = await callPortal("/api/internal/buyers/list", {});
+  if (!data?.ok) throw new Error((data?.errors || []).join(" ") || "Buyers could not be loaded");
+  return data.options || [];
 }
 
-async function getBuyerOptions() {
-  const records = await buyersBase(BUYERS_AIRTABLE_TABLE)
-    .select({
-      fields: [
-        "Full Name",
-        "Company Name",
-        "VAT ID",
-        "Email",
-        "Address",
-        "Address line 2",
-        "Zipcode",
-        "City",
-        "Country"
-      ],
-      sort: [{ field: "Full Name", direction: "asc" }]
-    })
-    .all();
+async function getBuyerCountryOptions() {
+  const data = await callPortal("/api/internal/buyers/list", {});
+  if (!data?.ok) throw new Error((data?.errors || []).join(" ") || "Countries could not be loaded");
+  return data.countries || [];
+}
 
-  return records
-    .map((record) => ({
-      id: record.id,
-      label: buyerLabel(record.fields),
-      details: {
-        full_name: asText(record.fields["Full Name"]),
-        company_name: asText(record.fields["Company Name"]),
-        vat_id: asText(record.fields["VAT ID"]),
-        email: asText(record.fields["Email"]),
-        address: asText(record.fields["Address"]),
-        address_line_2: asText(record.fields["Address line 2"]),
-        zipcode: asText(record.fields["Zipcode"]),
-        city: asText(record.fields["City"]),
-        country: asText(record.fields["Country"])
-      }
-    }))
-    .filter((option) => option.label)
-    .sort((a, b) => a.label.localeCompare(b.label, "en", { sensitivity: "base" }));
+// The buyer behind a Create Outbound option, with the main-base Airtable row
+// an External Sales Log deal still links to (the portal makes it if needed).
+async function resolveBuyer(optionId) {
+  const data = await callPortal("/api/internal/buyers/get", { id: optionId, with_airtable: true });
+  if (!data?.ok || !data.buyer) return null;
+
+  const b = data.buyer;
+  return {
+    recordId: asText(b.airtable_record_id),
+    buyerId: asText(b.buyer_id),
+    name: asText(b.full_name) || asText(b.company_name),
+    country: asText(b.country)
+  };
 }
 
 function manualSellerMatchesOrder(orderFields, sellerId, sellerRecordId) {
@@ -2051,38 +2038,6 @@ async function updateUnfulfilledOrderManualLabel({
     "Label Error Message": null
   });
   return uploadedPdfUrl;
-}
-
-async function getBuyerCountryOptions() {
-  const token = BUYERS_AIRTABLE_TOKEN || AIRTABLE_TOKEN;
-
-  const response = await fetch(`https://api.airtable.com/v0/meta/bases/${BUYERS_AIRTABLE_BASE_ID}/tables`, {
-    headers: {
-      Authorization: `Bearer ${token}`
-    }
-  });
-
-  const data = await response.json();
-
-  if (!response.ok) {
-    throw new Error(data?.error?.message || "Failed to load buyer country options");
-  }
-
-  const table = (data.tables || []).find((entry) => entry.name === BUYERS_AIRTABLE_TABLE);
-  if (!table) {
-    throw new Error(`Table "${BUYERS_AIRTABLE_TABLE}" not found in buyers base`);
-  }
-
-  const countryField = (table.fields || []).find((field) => field.name === "Country");
-  if (!countryField) {
-    throw new Error('Field "Country" not found in buyers table');
-  }
-
-  const choices = countryField.options?.choices || [];
-
-  return choices
-    .map((choice) => asText(choice.name))
-    .filter(Boolean);
 }
 
 async function getPackShipOutboundDetails(outboundId, sourceTable) {
@@ -3637,98 +3592,28 @@ app.get("/api/outbound-buyer-country-options", async (_req, res) => {
 
 app.post("/api/outbound-buyers", async (req, res) => {
   try {
-    const fullName = asText(req.body?.full_name);
-    const companyName = asText(req.body?.company_name);
-    const vatId = asText(req.body?.vat_id);
-    const email = asText(req.body?.email);
-    const address = asText(req.body?.address);
-    const addressLine2 = asText(req.body?.address_line_2);
-    const zipcode = asText(req.body?.zipcode);
-    const city = asText(req.body?.city);
-    const country = asText(req.body?.country);
+    // The portal checks everything an invoice needs and refuses a second row
+    // for a business that is already a buyer (same VAT ID or email).
+    const data = await callPortal("/api/internal/buyers/create", {
+      full_name: asText(req.body?.full_name),
+      company_name: asText(req.body?.company_name),
+      vat_id: asText(req.body?.vat_id),
+      email: asText(req.body?.email),
+      address: asText(req.body?.address),
+      address_line_2: asText(req.body?.address_line_2),
+      zipcode: asText(req.body?.zipcode),
+      city: asText(req.body?.city),
+      country: asText(req.body?.country)
+    });
 
-    if (!fullName || !email || !address || !zipcode || !city || !country) {
-      return res.status(400).json({
-        error: "Missing required buyer fields"
+    if (!data?.ok) {
+      return res.status(data?.httpStatus === 409 ? 409 : 400).json({
+        error: (data?.errors || []).join(" ") || "The buyer could not be saved",
+        existing: data?.existing || null
       });
     }
 
-    // 1. Create buyer in external Airtable
-    const createdExternal = await buyersBase(BUYERS_AIRTABLE_TABLE).create({
-      "Full Name": fullName,
-      "Company Name": companyName || null,
-      "VAT ID": vatId || null,
-      "Email": email,
-      "Address": address,
-      "Address line 2": addressLine2 || null,
-      "Zipcode": zipcode,
-      "City": city,
-      "Country": country
-    });
-    
-    // 2. Reload to obtain formula fields
-    const externalRecords = await buyersBase(BUYERS_AIRTABLE_TABLE)
-      .select({
-        fields: [
-          "Buyer ID",
-          "Country Code",
-          "Full Name",
-          "Company Name",
-          "VAT ID",
-          "Email",
-          "Address",
-          "Address line 2",
-          "Zipcode",
-          "City",
-          "Country"
-        ],
-        filterByFormula: `RECORD_ID() = '${createdExternal.id}'`,
-        maxRecords: 1
-      })
-      .firstPage();
-    
-    const created = externalRecords[0];
-    
-    const buyerIdValue = asText(created.fields["Buyer ID"]);
-    const countryCodeValue = asText(created.fields["Country Code"]);
-    
-    // 3. Create buyer in main Airtable if not exists
-    const existingMainBuyer = await findMainBuyerRecordByBuyerId(buyerIdValue);
-    
-    if (!existingMainBuyer) {
-      await airtable(AIRTABLE_BUYERS_TABLE).create({
-        "Buyer ID": buyerIdValue,
-        "Country Code": countryCodeValue || null,
-        "Full Name": asText(created.fields["Full Name"]),
-        "Company Name": asText(created.fields["Company Name"]) || null,
-        "VAT ID": asText(created.fields["VAT ID"]) || null,
-        "Email": asText(created.fields["Email"]),
-        "Address": asText(created.fields["Address"]),
-        "Address line 2": asText(created.fields["Address line 2"]) || null,
-        "Zipcode": asText(created.fields["Zipcode"]),
-        "City": asText(created.fields["City"]),
-        "Country": asText(created.fields["Country"])
-      });
-    }
-
-    return res.status(200).json({
-      ok: true,
-      option: {
-        id: created.id,
-        label: buyerLabel(created.fields),
-        details: {
-          full_name: asText(created.fields["Full Name"]),
-          company_name: asText(created.fields["Company Name"]),
-          vat_id: asText(created.fields["VAT ID"]),
-          email: asText(created.fields["Email"]),
-          address: asText(created.fields["Address"]),
-          address_line_2: asText(created.fields["Address line 2"]),
-          zipcode: asText(created.fields["Zipcode"]),
-          city: asText(created.fields["City"]),
-          country: asText(created.fields["Country"])
-        }
-      }
-    });
+    return res.status(200).json({ ok: true, option: data.option });
   } catch (error) {
     console.error("create outbound buyer failed:", error);
     return res.status(500).json({
@@ -4042,30 +3927,13 @@ app.post("/api/submit-outbound", async (req, res) => {
         return res.status(400).json({ error: "Missing buyer_id" });
       }
 
-      // Fetch Buyer ID from external Airtable
-      const externalBuyerRecords = await buyersBase(BUYERS_AIRTABLE_TABLE)
-        .select({
-          fields: ["Buyer ID"],
-          filterByFormula: `RECORD_ID() = '${escapeFormulaValue(buyerId)}'`,
-          maxRecords: 1
-        })
-        .firstPage();
-      
-      const externalBuyer = externalBuyerRecords[0];
-      if (!externalBuyer) {
+      const buyer = await resolveBuyer(buyerId);
+      if (!buyer?.recordId) {
         return res.status(400).json({ error: "Selected buyer not found" });
       }
-      
-      const buyerIdValue = asText(externalBuyer.fields["Buyer ID"]);
-      
-      // Find corresponding buyer in main Airtable
-      const mainBuyerRecord = await findMainBuyerRecordByBuyerId(buyerIdValue);
-      if (!mainBuyerRecord) {
-        return res.status(400).json({
-          error: `No matching buyer found in main Airtable for Buyer ID ${buyerIdValue}`
-        });
-      }
-      
+
+      const mainBuyerRecord = { id: buyer.recordId };
+
       const { fields: salesShippingFields } = await shippingFieldsFor("external-sales");
 
       const createdRecord = await airtable(AIRTABLE_EXTERNAL_SALES_LOG_TABLE).create({
@@ -4097,29 +3965,17 @@ app.post("/api/submit-outbound", async (req, res) => {
 
     let mainBuyerRecord = null;
     let buyerIdValue = "";
+    let resolvedBuyer = null;
 
     if (buyerId) {
-      const externalBuyerRecords = await buyersBase(BUYERS_AIRTABLE_TABLE)
-        .select({
-          fields: ["Buyer ID"],
-          filterByFormula: `RECORD_ID() = '${escapeFormulaValue(buyerId)}'`,
-          maxRecords: 1
-        })
-        .firstPage();
+      resolvedBuyer = await resolveBuyer(buyerId);
 
-      const externalBuyer = externalBuyerRecords[0];
-      if (!externalBuyer) {
+      if (!resolvedBuyer?.recordId) {
         return res.status(400).json({ error: "Selected buyer not found" });
       }
 
-      buyerIdValue = asText(externalBuyer.fields["Buyer ID"]);
-      mainBuyerRecord = await findMainBuyerRecordByBuyerId(buyerIdValue);
-
-      if (!mainBuyerRecord) {
-        return res.status(400).json({
-          error: `No matching buyer found in main Airtable for Buyer ID ${buyerIdValue}`
-        });
-      }
+      buyerIdValue = resolvedBuyer.buyerId;
+      mainBuyerRecord = { id: resolvedBuyer.recordId };
     }
 
     /*
@@ -4129,7 +3985,7 @@ app.post("/api/submit-outbound", async (req, res) => {
     */
     if (partnerPairIds.length) {
       const stored = await storeLabelFiles(labelFiles, "forwarding");
-      const buyerDetails = mainBuyerRecord ? await describeMainBuyer(mainBuyerRecord.id) : null;
+      const buyerDetails = resolvedBuyer ? { name: resolvedBuyer.name, country: resolvedBuyer.country } : null;
 
       const data = await callPortal("/api/internal/forwarding/create", {
         seller_record_id: sellerId,

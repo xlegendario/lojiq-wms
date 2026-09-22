@@ -1052,8 +1052,18 @@
 
       const data = await response.json();
 
+      // Already a buyer (same VAT ID or email): pick that one instead of
+      // making the business twice.
+      if (response.status === 409 && data.existing?.id && buyers.some((b) => b.id === data.existing.id)) {
+        buyerSelect.value = data.existing.id;
+        renderBuyerDetails();
+        toggleBuyerForm(false);
+        showToast(data.error, "warning", "Existing buyer selected");
+        return;
+      }
+
       if (!response.ok) {
-        throw new Error(data.details || data.error || "Failed to create buyer");
+        throw new Error(data.error || data.details || "Failed to create buyer");
       }
 
       buyers.push(data.option);
