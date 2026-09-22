@@ -1374,6 +1374,15 @@ async function getInboundPartyOptions() {
   return [...sellerOptions, ...merchantOptions];
 }
 
+// A buyer is recognised by the business, not by its owner: "Company (Owner)",
+// or just the name for a private buyer.
+function buyerLabel(fields) {
+  const company = asText(fields["Company Name"]);
+  const person = asText(fields["Full Name"]);
+  if (company && person && company.toLowerCase() !== person.toLowerCase()) return `${company} (${person})`;
+  return company || person;
+}
+
 async function getBuyerOptions() {
   const records = await buyersBase(BUYERS_AIRTABLE_TABLE)
     .select({
@@ -1395,7 +1404,7 @@ async function getBuyerOptions() {
   return records
     .map((record) => ({
       id: record.id,
-      label: asText(record.fields["Full Name"]),
+      label: buyerLabel(record.fields),
       details: {
         full_name: asText(record.fields["Full Name"]),
         company_name: asText(record.fields["Company Name"]),
@@ -1408,7 +1417,8 @@ async function getBuyerOptions() {
         country: asText(record.fields["Country"])
       }
     }))
-    .filter((option) => option.label);
+    .filter((option) => option.label)
+    .sort((a, b) => a.label.localeCompare(b.label, "en", { sensitivity: "base" }));
 }
 
 function manualSellerMatchesOrder(orderFields, sellerId, sellerRecordId) {
@@ -3705,7 +3715,7 @@ app.post("/api/outbound-buyers", async (req, res) => {
       ok: true,
       option: {
         id: created.id,
-        label: asText(created.fields["Full Name"]),
+        label: buyerLabel(created.fields),
         details: {
           full_name: asText(created.fields["Full Name"]),
           company_name: asText(created.fields["Company Name"]),
