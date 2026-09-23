@@ -339,17 +339,21 @@
       color: #F04438;
     }
 
-    .stock-choice { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.45); display: flex; align-items: center; justify-content: center; z-index: 50; }
+    /* The same dark panel as the rest of the page: a white card here took
+       the page's light-blue text with it and read as a ghost. */
+    .stock-choice { position: fixed; inset: 0; background: rgba(4, 12, 24, 0.72); display: flex; align-items: center; justify-content: center; z-index: 50; }
     .stock-choice[hidden] { display: none; }
-    .stock-choice-card { background: #fff; border-radius: 14px; padding: 20px; width: min(420px, calc(100vw - 32px)); box-shadow: 0 24px 60px rgba(15, 23, 42, 0.25); }
-    .stock-choice-card h3 { margin: 0 0 4px; font-size: 17px; }
-    .stock-choice-title { margin: 0 0 14px; color: #64748b; font-size: 13px; }
-    .stock-option { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid #e2e8f0; border-radius: 10px; margin-bottom: 8px; }
+    .stock-choice-card { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 16px; padding: 20px; width: min(420px, calc(100vw - 32px)); box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45); }
+    .stock-choice-card h3 { margin: 0 0 4px; font-size: 17px; color: #fff; }
+    .stock-choice-title { margin: 0 0 14px; color: var(--muted); font-size: 13px; }
+    .stock-option { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; margin-bottom: 8px; background: rgba(255, 255, 255, 0.03); }
+    .stock-option:hover { border-color: var(--primary); }
     .stock-option-main { display: flex; flex-direction: column; gap: 2px; }
-    .stock-option-sub { color: #64748b; font-size: 12px; }
+    .stock-option-main strong { color: #fff; }
+    .stock-option-sub { color: var(--muted); font-size: 12px; }
     .stock-option-qty { width: 72px; }
     .stock-choice-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
-    .row-source { color: #64748b; font-size: 11px; }
+    .row-source { color: var(--muted); font-size: 11px; }
 
     .scan-hidden {
       position: absolute;
