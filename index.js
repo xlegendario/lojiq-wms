@@ -25,7 +25,6 @@ const {
   AIRTABLE_SELLERS_TABLE = "Sellers Database",
   AIRTABLE_MERCHANTS_TABLE = "Merchants",
   AIRTABLE_INVENTORY_UNITS_TABLE = "Inventory Units",
-  AIRTABLE_EXTERNAL_SALES_LOG_TABLE = "External Sales Log",
   AIRTABLE_RETURNS_TABLE = "Incoming Returns",
   AIRTABLE_FORWARDING_SERVICE_LOG_TABLE = "Forwarding Service Log",
   AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE = "Unfulfilled Orders Log",
@@ -812,15 +811,13 @@ async function findIncomingStockByGTIN(gtin) {
  * StockX catalog. Same secret as the Lojiq bot call below.
  */
 /*
- * External Sales in Supabase (block 2 and 3 of the plan, 22-09-2026).
+ * External Sales live in Supabase (blocks 2, 3 and 9 of the plan).
  *
- * With EXTERNAL_SALES_IN_SUPABASE=true a Selling outbound is made by the
- * Lojiq portal - deal, pairs and parcels in Supabase, units Reserved, the
- * invoice made and mailed - instead of a row in the Airtable External Sales
- * Log. Unset or anything else: everything as before. Pack & Ship shows the
- * Supabase deals either way; there are none until the switch is on.
+ * A Selling outbound is made by the Lojiq portal - deal, pairs and parcels in
+ * Supabase, units Reserved, the invoice made and mailed - and packed from
+ * there. The Airtable External Sales Log is read-only history since
+ * 23-09-2026: nothing here reads it or writes to it.
  */
-const EXTERNAL_SALES_IN_SUPABASE = String(process.env.EXTERNAL_SALES_IN_SUPABASE || "").trim().toLowerCase() === "true";
 const LOJIQ_PORTAL_BASE_URL = String(process.env.LOJIQ_PORTAL_BASE_URL || "https://lojiq-client-portal.onrender.com").replace(/\/$/, "");
 
 // The Lojiq portal, with the secret the WMS already shares with the portals.
@@ -1011,20 +1008,6 @@ async function isWarehouseItem(inventoryRecord) {
 }
 
 async function getPackShipOutboundOptions() {
-  // With External Sales in Supabase every sale - also the ones that started in
-  // the Airtable log - is packed from there, so the log is not asked.
-  const salesRecords = EXTERNAL_SALES_IN_SUPABASE ? [] : await airtable(AIRTABLE_EXTERNAL_SALES_LOG_TABLE)
-    .select({
-      fields: [
-        "External Deal ID",
-        "Buyer Name",
-        "Shipping Status",
-        "Tracking Numbers"
-      ],
-      filterByFormula: `{Shipping Status} = 'Ready to Ship'`
-    })
-    .all();
-
   const forwardingRecords = await airtable(AIRTABLE_FORWARDING_SERVICE_LOG_TABLE)
     .select({
       fields: [
@@ -1059,22 +1042,7 @@ async function getPackShipOutboundOptions() {
     })
     .all();
 
-  const salesOptions = salesRecords
-    .map((record) => {
-      const shippingStatus = asText(record.fields["Shipping Status"]);
-      const trackingNumbers = parseTrackingNumbers(record.fields["Tracking Numbers"]);
-      const externalDealId = asText(record.fields["External Deal ID"]);
-      const buyerName = asText(record.fields["Buyer Name"]);
-
-      return {
-        id: record.id,
-        source_table: "external_sales_log",
-        label: `${externalDealId || record.id} - ${buyerName || "Unknown Buyer"}`,
-        shipping_status: shippingStatus,
-        tracking_numbers_count: trackingNumbers.length
-      };
-    })
-    .filter((option) => option.tracking_numbers_count > 0);
+  const salesOptions = [];
 
   const forwardingOptions = forwardingRecords
     .map((record) => {
@@ -2222,12 +2190,7 @@ async function getPackShipOutboundDetails(outboundId, sourceTable) {
     };
   }
 
-  const tableName =
-    sourceTable === "forwarding_service_log"
-      ? AIRTABLE_FORWARDING_SERVICE_LOG_TABLE
-      : AIRTABLE_EXTERNAL_SALES_LOG_TABLE;
-
-  const record = await airtable(tableName).find(outboundId);
+  const record = await airtable(AIRTABLE_FORWARDING_SERVICE_LOG_TABLE).find(outboundId);
 
   const trackingNumbers = parseTrackingNumbers(record.fields["Tracking Numbers"]);
   const linkedInventoryUnitIds = Array.isArray(record.fields["Linked Inventory Units"])
@@ -2248,7 +2211,7 @@ async function getPackShipOutboundDetails(outboundId, sourceTable) {
 
   return {
     id: record.id,
-    source_table: sourceTable === "forwarding_service_log" ? "forwarding_service_log" : "external_sales_log",
+    source_table: "forwarding_service_log",
     shipping_status: asText(record.fields["Shipping Status"]),
     tracking_numbers: trackingNumbers,
     shipping_labels: Array.isArray(record.fields["Shipping Labels"])
@@ -3589,12 +3552,7 @@ app.post("/api/submit-pack-ship", async (req, res) => {
       return res.status(200).json({ ok: true });
     }
 
-    const tableName =
-      sourceTable === "forwarding_service_log"
-        ? AIRTABLE_FORWARDING_SERVICE_LOG_TABLE
-        : AIRTABLE_EXTERNAL_SALES_LOG_TABLE;
-
-    await airtable(tableName).update(outboundId, {
+    await airtable(AIRTABLE_FORWARDING_SERVICE_LOG_TABLE).update(outboundId, {
       "Items per Parcel": itemsPerParcel,
       "Shipping Status": "Shipped"
     });
@@ -3934,9 +3892,9 @@ app.post("/api/outbound-search-sku-size", async (req, res) => {
   }
 });
 
-// What the page needs to know: which Selling flow is on.
+// A Selling outbound always goes to Supabase through the portal.
 app.get("/api/outbound-config", (_req, res) => {
-  res.json({ ok: true, external_sales_in_supabase: EXTERNAL_SALES_IN_SUPABASE });
+  res.json({ ok: true, external_sales_in_supabase: true });
 });
 
 // The sale as the portal will make it: price per pair, VAT, profit, and
@@ -4044,7 +4002,7 @@ app.post("/api/submit-outbound", async (req, res) => {
       return { fields, stored };
     };
 
-    if (mode === "Selling" && EXTERNAL_SALES_IN_SUPABASE) {
+    if (mode === "Selling") {
       if (!buyerId) {
         return res.status(400).json({ error: "Choose the buyer." });
       }
@@ -4076,39 +4034,6 @@ app.post("/api/submit-outbound", async (req, res) => {
         deal: data.deal,
         invoice_log: data.invoice_log || [],
         invoice_error: data.invoice_error || ""
-      });
-    }
-
-    if (mode === "Selling") {
-      if (!buyerId) {
-        return res.status(400).json({ error: "Missing buyer_id" });
-      }
-
-      const buyer = await resolveBuyer(buyerId);
-      if (!buyer?.recordId) {
-        return res.status(400).json({ error: "Selected buyer not found" });
-      }
-
-      const mainBuyerRecord = { id: buyer.recordId };
-
-      const { fields: salesShippingFields } = await shippingFieldsFor("external-sales");
-
-      const createdRecord = await airtable(AIRTABLE_EXTERNAL_SALES_LOG_TABLE).create({
-        "Buyer ID": [mainBuyerRecord.id],
-        "Linked Inventory Units": linkedInventoryUnitIds,
-        "Total Selling Price": totalSellingPrice,
-        "Shipping Costs": shippingCosts,
-        "Amount of Labels": shippingLabels,
-        "Sale Date": new Date().toISOString().split("T")[0],
-        ...salesShippingFields
-      });
-
-      await updateInventoryUnitsToReserved(linkedInventoryUnitIds);
-
-      return res.status(200).json({
-        ok: true,
-        id: createdRecord.id,
-        linked_inventory_units_count: linkedInventoryUnitIds.length
       });
     }
 
