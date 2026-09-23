@@ -901,6 +901,60 @@ async function partnerForwardableLookup({ sellerRecordId, barcode = "", sku = ""
   return data.is_partner ? data : null;
 }
 
+/*
+ * Selling a partner pair (block 10, 23-09-2026).
+ *
+ * Partner stock sits on our shelf without an Inventory Unit, so it cannot be
+ * found among the units; the portal knows it. What comes back is grouped by
+ * what we owe the partner, because two pairs at the same price are the same
+ * choice and a cheaper batch is not.
+ */
+async function partnerSellableGroups({ sku, size }) {
+  if (!sku || !size) return [];
+
+  try {
+    const data = await callLojiq("/api/internal/external-sales/partner-stock", { sku, size }, { timeoutMs: 15000 });
+    return data?.ok ? (data.groups || []) : [];
+  } catch (error) {
+    // The sale can still be made from our own stock; the partner pairs are
+    // simply not offered this time.
+    console.error("partner stock lookup failed:", error.message);
+    return [];
+  }
+}
+
+/*
+ * What is available for a shoe, as the choices Dario makes: our own units by
+ * what they cost us, then the partner's pairs. One group means no choice to
+ * make and Create Outbound adds it straight away.
+ */
+function sellingGroups(records, partnerGroups) {
+  const own = new Map();
+
+  for (const record of records) {
+    const price = Math.round((Number(record.fields["Purchase Price"]) || 0) * 100) / 100;
+    if (!own.has(price)) own.set(price, { kind: "own", price, ids: [], seller_id: "" });
+    own.get(price).ids.push(record.id);
+  }
+
+  const groups = [...own.values()]
+    .sort((a, b) => a.price - b.price)
+    .map((group) => ({ ...group, available: group.ids.length, label: `Own stock` }));
+
+  for (const partner of partnerGroups) {
+    groups.push({
+      kind: "partner",
+      price: Number(partner.price) || 0,
+      seller_id: partner.seller_id || "",
+      available: partner.available,
+      ids: (partner.ids || []).map((id) => `${PARTNER_PAIR_PREFIX}${id}`),
+      label: `Partner ${partner.seller_id || ""}`.trim()
+    });
+  }
+
+  return groups;
+}
+
 function mergePartnerPairs({ partner, records, fallback }) {
   const pairs = partner?.pairs || [];
 
@@ -3814,6 +3868,8 @@ app.post("/api/outbound-search-sku-size", async (req, res) => {
       ? await partnerForwardableLookup({ sellerRecordId: sellerId, sku, size })
       : null;
 
+    const partnerForSale = mode === "Forwarding" ? [] : await partnerSellableGroups({ sku, size });
+
     const records = await airtable(AIRTABLE_INVENTORY_UNITS_TABLE)
       .select({
         filterByFormula: mode === "Forwarding"
@@ -3841,14 +3897,16 @@ app.post("/api/outbound-search-sku-size", async (req, res) => {
       return res.status(200).json(withPartnerPairsForSku);
     }
 
-    if (!records.length) {
+    if (!records.length && !partnerForSale.length) {
       return res.status(200).json({
         found: false,
         reason: "not_found"
       });
     }
 
-    const first = records[0];
+    const groups = mode === "Forwarding" ? [] : sellingGroups(records, partnerForSale);
+    const partnerFirst = partnerForSale[0] || null;
+    const first = records[0] || { fields: {} };
     const gtin = asText(first.fields["Product GTIN"]);
     const productName = asText(first.fields["Product Name"]);
     const sellerIds = records
@@ -3870,18 +3928,22 @@ app.post("/api/outbound-search-sku-size", async (req, res) => {
       averagePrice = purchasePrices.length ? totalPrice / purchasePrices.length : 0;
     }
 
+    const partnerCount = partnerForSale.reduce((sum, group) => sum + (Number(group.available) || 0), 0);
+
     return res.status(200).json({
       found: true,
-      gtin,
-      product_name: productName,
+      gtin: gtin || asText(partnerFirst?.barcode),
+      product_name: productName || asText(partnerFirst?.product_name),
       sku,
       size,
-      available_quantity: records.length,
+      available_quantity: records.length + partnerCount,
       unit_price: averagePrice,
       total_available_price: totalPrice,
       inventory_unit_ids: records.map((record) => record.id),
       seller_ids: sellerIds,
-      unit_forwarding_fee: averagePrice
+      unit_forwarding_fee: averagePrice,
+      // What there is to choose from (block 10). One group is no choice.
+      groups
     });
   } catch (error) {
     console.error("outbound-search-sku-size failed:", error);
@@ -3911,6 +3973,10 @@ app.post("/api/outbound-preview", async (req, res) => {
     const data = await callLojiq("/api/internal/external-sales/preview", {
       buyer_id: asText(req.body?.buyer_id),
       unit_ids: unitIds.filter((id) => !String(id).startsWith(PARTNER_PAIR_PREFIX)),
+      // A partner pair has no unit yet; the portal makes one when it is sold.
+      partner_pair_ids: unitIds
+        .filter((id) => String(id).startsWith(PARTNER_PAIR_PREFIX))
+        .map((id) => String(id).slice(PARTNER_PAIR_PREFIX.length)),
       total_selling_price: Number(req.body?.total_selling_price) || 0,
       parcels: Array.isArray(req.body?.parcels) ? req.body.parcels : []
     }, { timeoutMs: 20000 });
@@ -3966,15 +4032,10 @@ app.post("/api/submit-outbound", async (req, res) => {
       (id) => !String(id).startsWith(PARTNER_PAIR_PREFIX)
     );
 
-    // Partner pairs are only ever offered for forwarding; selling them from
-    // here would bypass the partner's price entirely.
-    if (mode === "Selling" && partnerPairIds.length) {
-      return res.status(400).json({ error: "Partner pairs can only be forwarded from here" });
-    }
-
     // A forward is either partner pairs (Supabase) or old Airtable units, not
-    // both: they end up in two different logs.
-    if (partnerPairIds.length && airtableUnitIds.length) {
+    // both: they end up in two different logs. A sale may mix them - the
+    // portal makes an Inventory Unit for every partner pair it sells.
+    if (mode === "Forwarding" && partnerPairIds.length && airtableUnitIds.length) {
       return res.status(400).json({
         error: "Partner pairs and old Airtable units cannot go in one outbound. Submit them separately."
       });
@@ -4017,6 +4078,7 @@ app.post("/api/submit-outbound", async (req, res) => {
       const data = await callLojiq("/api/internal/external-sales/create", {
         buyer_id: buyerId,
         unit_ids: airtableUnitIds,
+        partner_pair_ids: partnerPairIds,
         total_selling_price: totalSellingPrice,
         labels_needed: shippingLabels,
         parcels: parcelsFrom(stored, trackingNumbers),

@@ -339,6 +339,18 @@
       color: #F04438;
     }
 
+    .stock-choice { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.45); display: flex; align-items: center; justify-content: center; z-index: 50; }
+    .stock-choice[hidden] { display: none; }
+    .stock-choice-card { background: #fff; border-radius: 14px; padding: 20px; width: min(420px, calc(100vw - 32px)); box-shadow: 0 24px 60px rgba(15, 23, 42, 0.25); }
+    .stock-choice-card h3 { margin: 0 0 4px; font-size: 17px; }
+    .stock-choice-title { margin: 0 0 14px; color: #64748b; font-size: 13px; }
+    .stock-option { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid #e2e8f0; border-radius: 10px; margin-bottom: 8px; }
+    .stock-option-main { display: flex; flex-direction: column; gap: 2px; }
+    .stock-option-sub { color: #64748b; font-size: 12px; }
+    .stock-option-qty { width: 72px; }
+    .stock-choice-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+    .row-source { color: #64748b; font-size: 11px; }
+
     .scan-hidden {
       position: absolute;
       left: -9999px;
@@ -643,6 +655,18 @@
     </div>
   </div>
 
+  <div id="stockChoice" class="stock-choice" hidden>
+    <div class="stock-choice-card">
+      <h3>Which stock?</h3>
+      <p class="stock-choice-title" id="stockChoiceTitle"></p>
+      <div id="stockChoiceList"></div>
+      <div class="stock-choice-foot">
+        <button id="stockChoiceCancel" class="button secondary" type="button">Cancel</button>
+        <button id="stockChoiceAdd" class="button" type="button">Add</button>
+      </div>
+    </div>
+  </div>
+
   <div id="toastStack" class="toast-stack"></div>
 
   <script>
@@ -664,6 +688,11 @@
     const buyerCityInput = document.getElementById("buyerCityInput");
     const buyerCountryInput = document.getElementById("buyerCountryInput");
     const scanInput = document.getElementById("scanInput");
+    const stockChoice = document.getElementById("stockChoice");
+    const stockChoiceTitle = document.getElementById("stockChoiceTitle");
+    const stockChoiceList = document.getElementById("stockChoiceList");
+    const stockChoiceAdd = document.getElementById("stockChoiceAdd");
+    const stockChoiceCancel = document.getElementById("stockChoiceCancel");
     const manualSkuInput = document.getElementById("manualSkuInput");
     const manualSizeInput = document.getElementById("manualSizeInput");
     const manualSearchBtn = document.getElementById("manualSearchBtn");
@@ -990,6 +1019,67 @@
       }
     }
 
+    /*
+     * Which shelf a pair comes off (block 10). Only asked when there is
+     * something to choose: our own stock at one price is added without a
+     * word, as it always was.
+     */
+    const groupLabel = (group) => group.kind === "partner"
+      ? `Partner ${group.seller_id || ""}`.trim()
+      : "Own stock";
+
+    function askWhichStock(data) {
+      const groups = (data.groups || []).filter((group) => group.available > 0);
+
+      return new Promise((resolve) => {
+        stockChoiceList.innerHTML = groups.map((group, index) => `
+          <label class="stock-option">
+            <span class="stock-option-main">
+              <strong>${escapeHtml(groupLabel(group))}</strong>
+              <span class="stock-option-sub">€${Number(group.price).toFixed(2)} · ${group.available} available</span>
+            </span>
+            <input class="input stock-option-qty" type="number" min="0" max="${group.available}" value="${index === 0 ? 1 : 0}" data-group="${index}" />
+          </label>`).join("");
+
+        stockChoiceTitle.textContent = `${data.product_name || data.sku} · size ${data.size}`;
+        stockChoice.hidden = false;
+
+        const close = (picked) => {
+          stockChoice.hidden = true;
+          stockChoiceAdd.onclick = null;
+          stockChoiceCancel.onclick = null;
+          resolve(picked);
+        };
+
+        stockChoiceAdd.onclick = () => {
+          const picked = [...stockChoiceList.querySelectorAll(".stock-option-qty")]
+            .map((input, index) => ({ group: groups[index], quantity: Math.max(0, Math.min(Number(input.value) || 0, groups[index].available)) }))
+            .filter((row) => row.quantity > 0);
+          close(picked);
+        };
+
+        stockChoiceCancel.onclick = () => close([]);
+      });
+    }
+
+    /*
+     * What the search or the scan found, put on the list: straight away when
+     * there is one shelf, after one question when there are more.
+     */
+    async function addFromLookup(data) {
+      const groups = (data.groups || []).filter((group) => group.available > 0);
+
+      if (groups.length <= 1) {
+        addOrIncrementItem(data, groups[0] || null);
+        showToast(`Added ${data.product_name || data.sku}.`, "success", "Success");
+        return;
+      }
+
+      for (const { group, quantity } of await askWhichStock(data)) {
+        for (let i = 0; i < quantity; i += 1) addOrIncrementItem(data, group);
+      }
+    }
+
     function renderTable() {
       if (!items.length) {
         itemsTableBody.innerHTML = `<tr><td colspan="9" class="empty">No products added yet</td></tr>`;
@@ -1001,7 +1091,7 @@
         <tr>
           <td>${escapeHtml(item.gtin)}</td>
           <td>${escapeHtml(item.productName)}</td>
-          <td>${escapeHtml(item.sku)}</td>
+          <td>${escapeHtml(item.sku)}${item.source ? `<div class="row-source">${escapeHtml(item.source)}</div>` : ""}</td>
           <td>${escapeHtml(item.size)}</td>
           <td>${item.availableQuantity}</td>
           <td>
@@ -1034,11 +1124,19 @@
       renderSummaryTotals();
     }
 
-    function addOrIncrementItem(data) {
+    /*
+     * One line per shelf (block 10): our own stock at a given purchase price
+     * and a partner's pairs are different rows, because they cost us
+     * different money and only one of them is ours.
+     */
+    function addOrIncrementItem(data, group = null) {
+      const groupKey = group ? `${group.kind}|${group.price}|${group.seller_id || ""}` : "";
+
       const existing = items.find((item) =>
         item.sku.trim().toUpperCase() === data.sku.trim().toUpperCase() &&
         item.size.trim() === data.size.trim() &&
-        (item.gtin || "") === (data.gtin || "")
+        (item.gtin || "") === (data.gtin || "") &&
+        (item.groupKey || "") === groupKey
       );
 
       if (existing) {
@@ -1057,11 +1155,13 @@
         productName: data.product_name,
         sku: data.sku,
         size: data.size,
-        availableQuantity: data.available_quantity,
+        availableQuantity: group ? group.available : data.available_quantity,
         quantity: 1,
-        unitPrice: Number(data.unit_price) || 0,
-        inventoryUnitIds: Array.isArray(data.inventory_unit_ids) ? data.inventory_unit_ids : [],
-        sellerIds: Array.isArray(data.seller_ids) ? data.seller_ids : []
+        unitPrice: group ? Number(group.price) || 0 : Number(data.unit_price) || 0,
+        inventoryUnitIds: group ? group.ids.slice() : (Array.isArray(data.inventory_unit_ids) ? data.inventory_unit_ids : []),
+        sellerIds: Array.isArray(data.seller_ids) ? data.seller_ids : [],
+        groupKey,
+        source: group ? groupLabel(group) : ""
       });
 
       renderTable();
@@ -1104,8 +1204,7 @@
         return;
       }
 
-      addOrIncrementItem(data);
-      showToast(`Added ${data.product_name}.`, "success", "Success");
+      await addFromLookup(data);
     }
 
     async function searchBySkuSize() {
@@ -1150,9 +1249,8 @@
         return;
       }
     
-      addOrIncrementItem(data);
-      showToast(`Added ${data.product_name}.`, "success", "Success");
-    
+      await addFromLookup(data);
+
       manualSkuInput.value = "";
       manualSizeInput.value = "";
       manualSkuInput.focus();
