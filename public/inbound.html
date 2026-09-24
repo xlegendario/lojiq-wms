@@ -92,7 +92,7 @@
     }
 
     .wrap {
-      max-width: 1150px;
+      max-width: 1440px;
       margin: 0 auto;
       padding: 110px 20px 60px;
     }
@@ -112,7 +112,7 @@
 
     .grid {
       display: grid;
-      grid-template-columns: 360px 1fr;
+      grid-template-columns: 320px 1fr;
       gap: 24px;
       align-items: start;
     }
@@ -153,12 +153,19 @@
       box-shadow: 0 0 0 3px rgba(47,128,237,0.15);
     }
 
-    .qty-input {
-      width: 90px;
+    /*
+     * Inside the table every field says how wide it is. Left at 100% they
+     * all shrink with the column, and a quantity of 12 reads as a 1.
+     */
+    .table input { padding: 10px 12px; }
+    .table input.qty-input {
+      width: 84px;
       text-align: center;
       font-weight: 700;
       color: var(--primary-soft);
     }
+    .table input.sku-input { width: 150px; }
+    .table input.size-input { width: 84px; }
   
     .button {
       width: 100%;
@@ -257,11 +264,11 @@
     table {
       width: 100%;
       border-collapse: collapse;
-      min-width: 820px;
+      min-width: 940px;
     }
 
     th, td {
-      padding: 14px 12px;
+      padding: 12px 9px;
       border-bottom: 1px solid rgba(22,50,82,0.85);
       text-align: left;
       vertical-align: middle;
@@ -284,7 +291,7 @@
     }
 
     .table input.price-input {
-      width: 90px;
+      width: 104px;
     }
 
     .price-col[hidden] {
@@ -301,8 +308,8 @@
       display: flex;
       align-items: center;
       gap: 10px;
-      min-width: 200px;
-      max-width: 280px;
+      min-width: 170px;
+      max-width: 230px;
     }
 
     .product img {
@@ -1105,6 +1112,7 @@
           <td data-product-cell>${productCellHtml(item)}</td>
           <td>
             <input
+              class="sku-input"
               value="${escapeHtml(item.sku)}"
               placeholder="Enter SKU"
               data-index="${index}"
@@ -1113,6 +1121,7 @@
           </td>
           <td>
             <input
+              class="size-input"
               value="${escapeHtml(item.size)}"
               placeholder="Enter size"
               data-index="${index}"
