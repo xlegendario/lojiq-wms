@@ -66,6 +66,22 @@ const {
     courier who needs to call reaches someone who can act on it.
   */
   SENDCLOUD_MARKETPLACE_FALLBACK_PHONE = "+31634349800",
+  /*
+    Where a pair goes when it comes to us first.
+
+    A consignor outside DPD's reach cannot post a Woovin parcel himself, so
+    he sends it here and we send it on. That label is ours to ours: Kickz
+    Caviar on both ends, the same address Woovin already prints as our
+    sender account, and UPS because it takes a Dutch label from anywhere.
+  */
+  WAREHOUSE_NAME = "Kickz Caviar",
+  WAREHOUSE_ADDRESS = "Havenstraat",
+  WAREHOUSE_HOUSE_NUMBER = "74D",
+  WAREHOUSE_POSTCODE = "1271AG",
+  WAREHOUSE_CITY = "Huizen",
+  WAREHOUSE_COUNTRY = "NL",
+  WAREHOUSE_PHONE = "+31687070075",
+  WAREHOUSE_EMAIL = "",
   R2_ACCOUNT_ID,
   R2_ACCESS_KEY_ID,
   R2_SECRET_ACCESS_KEY,
@@ -3066,14 +3082,66 @@ app.post("/api/receive-parcel", async (req, res) => {
           "Shipping Label",
           "Tracking Number",
           "Linked Seller ID",
-          "Claimed Seller ID"
+          "Claimed Seller ID",
+          "Inbound Tracking Number",
+          "Inbound Status",
+          "Marketplace"
         ],
         filterByFormula: `OR(
           TRIM({StockX Tracking Number} & '') = '${safeTracking}',
-          TRIM({GOAT Tracking Number} & '') = '${safeTracking}'
+          TRIM({GOAT Tracking Number} & '') = '${safeTracking}',
+          TRIM({Inbound Tracking Number} & '') = '${safeTracking}'
         )`
       })
       .all();
+
+    /*
+     * A pair that came to us so we can send it on.
+     *
+     * A marketplace consignor outside DPD's reach ships to the warehouse
+     * with our own label; this scan is the moment it lands. From here the
+     * order is an ordinary one: the marketplace's own label is fetched, it
+     * goes to Ready to Ship, and Pack & Ship picks it up.
+     *
+     * Before the label request below, because that one asks a store for a
+     * label - and here the label is already waiting at the marketplace.
+     */
+    const arrivedForOrder = unfulfilledRecords.find(
+      (record) => asText(record.fields["Inbound Tracking Number"]) === trackingNumber
+    );
+
+    if (arrivedForOrder) {
+      const orderId = asText(arrivedForOrder.fields["Order ID"]) || arrivedForOrder.id;
+
+      matchedOrderRecordId = arrivedForOrder.id;
+      matchedOrderId = orderId;
+
+      await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).update(arrivedForOrder.id, {
+        "Inbound Status": "Received"
+      });
+
+      /*
+       * The portal holds the marketplace tokens, so it runs the errand: it
+       * fetches the label, hands it to this service to store, and the order
+       * moves on. A failure here is worth saying out loud rather than
+       * swallowing - the pair is on the table and somebody is waiting to
+       * pack it.
+       */
+      const fetched = await callPortal("/api/internal/marketplace/label-after-arrival", {
+        order_record_id: arrivedForOrder.id
+      }).catch((error) => ({ ok: false, error: error.message }));
+
+      return res.status(200).json({
+        message: fetched?.ok === false
+          ? `${orderId} received, but its shipping label could not be fetched: ${fetched.error || "unknown reason"}`
+          : `${orderId} received - shipping label fetched, ready to pack`,
+        exists: true,
+        flow_type: "marketplace_inbound",
+        matched_unfulfilled_order: true,
+        order_id: orderId,
+        label_ready: fetched?.ok !== false
+      });
+    }
 
     if (unfulfilledRecords.length > 0) {
       const nonAllowedStatusRecord = unfulfilledRecords.find((record) => {
@@ -4271,8 +4339,44 @@ async function listSendcloudContracts(carrierCode) {
     }));
 }
 
-async function createMarketplaceLabel({ orderRecord, orderFields, orderId, dry = false, contractId = null }) {
-  const customerAddress = customerAddressFromOrderFields(orderFields);
+/*
+ * Our own warehouse, as an address to ship to.
+ *
+ * Same shape as a shopper's address so the rest of the label machinery does
+ * not have to know the difference.
+ */
+function warehouseAddress() {
+  return {
+    name: asText(WAREHOUSE_NAME),
+    company: asText(WAREHOUSE_NAME),
+    address1: asText(WAREHOUSE_ADDRESS),
+    houseNumber: asText(WAREHOUSE_HOUSE_NUMBER),
+    address2: "",
+    city: asText(WAREHOUSE_CITY),
+    postalCode: asText(WAREHOUSE_POSTCODE),
+    country: asText(WAREHOUSE_COUNTRY).toUpperCase(),
+    email: asText(WAREHOUSE_EMAIL),
+    phone: asText(WAREHOUSE_PHONE)
+  };
+}
+
+async function createMarketplaceLabel({
+  orderRecord,
+  orderFields,
+  orderId,
+  dry = false,
+  contractId = null,
+  /*
+    A parcel coming to us rather than going to the buyer.
+
+    Woovin ships on DPD alone, so a consignor outside its reach cannot post
+    their parcel at all and his shelf stayed off the biggest channel we
+    sell through. He now sends the pair here with this label and we send it
+    on with Woovin's, which is why the same order carries two of them.
+  */
+  toWarehouse = false
+}) {
+  const customerAddress = toWarehouse ? warehouseAddress() : customerAddressFromOrderFields(orderFields);
 
   if (!customerAddress.country) {
     throw new Error(`Order ${orderId} has no customer country to ship to`);
@@ -4296,7 +4400,14 @@ async function createMarketplaceLabel({ orderRecord, orderFields, orderId, dry =
     refuse the label over that, the parcel goes UPS and the log says why.
     A pair that ships a few euros dearer beats a pair that does not ship.
   */
-  let carrier = await pickMarketplaceCarrier(sellerCountryCode);
+  /*
+    UPS for a parcel coming to us, whatever the routing table says.
+
+    The whole reason this consignor cannot post the sale himself is that DPD
+    does not reach him, so asking DPD to collect it would fail for exactly
+    the same reason.
+  */
+  let carrier = toWarehouse ? "UPS" : await pickMarketplaceCarrier(sellerCountryCode);
 
   let method = await findSendcloudShippingMethod({
     carrier,
@@ -4377,22 +4488,42 @@ async function createMarketplaceLabel({ orderRecord, orderFields, orderId, dry =
     pdfBuffer: labelPdfBuffer
   });
 
-  await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).update(orderRecord.id, {
-    "Fulfillment Status": "Requested Label",
-    "Tracking Number": sendcloud.trackingNumber,
-    /*
-      Recorded because a marketplace has to be told who is carrying it, and
-      working it out again later gets it wrong in exactly the case the
-      fallback above exists for: DPD chosen on the consignor's country, UPS
-      actually used because DPD does not reach the shopper. Reported wrong,
-      bol shows the buyer a courier that never had the parcel.
-    */
-    "Shipping Carrier": carrier,
-    "Shipping Label": [
-      { url: uploadedPdfUrl, filename: `${sanitizeFileName(orderId)}.pdf` }
-    ],
-    "Label Error Message": null
-  });
+  /*
+    The inbound leg keeps its own three fields, and touches nothing else.
+
+    Writing it into Shipping Label and Tracking Number would be overwritten
+    an hour later by Woovin's own label, and then nothing would record how
+    the pair reached us - or when the consignor actually sent it. The order
+    stays Allocated as well: Fulfillment Status has twenty-five values read
+    by six services, and a pair still in Italy is not Requested Label.
+  */
+  await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).update(
+    orderRecord.id,
+    toWarehouse
+      ? {
+        "Inbound Status": "Awaiting Shipment",
+        "Inbound Tracking Number": sendcloud.trackingNumber,
+        "Inbound Label URL": uploadedPdfUrl,
+        "Label Error Message": null
+      }
+      : {
+        "Fulfillment Status": "Requested Label",
+        "Tracking Number": sendcloud.trackingNumber,
+        /*
+          Recorded because a marketplace has to be told who is carrying it,
+          and working it out again later gets it wrong in exactly the case
+          the fallback above exists for: DPD chosen on the consignor's
+          country, UPS actually used because DPD does not reach the shopper.
+          Reported wrong, bol shows the buyer a courier that never had the
+          parcel.
+        */
+        "Shipping Carrier": carrier,
+        "Shipping Label": [
+          { url: uploadedPdfUrl, filename: `${sanitizeFileName(orderId)}.pdf` }
+        ],
+        "Label Error Message": null
+      }
+  );
 
   /*
     Delivered, not stored. A label nobody is told about is the same as no
@@ -4500,7 +4631,8 @@ app.post("/api/request-label", async (req, res) => {
           orderFields,
           orderId,
           dry: req.body?.dry === true,
-          contractId: /^\d+$/.test(asText(req.body?.contract_id)) ? asText(req.body.contract_id) : null
+          contractId: /^\d+$/.test(asText(req.body?.contract_id)) ? asText(req.body.contract_id) : null,
+          toWarehouse: req.body?.to_warehouse === true
         })
       );
     }
