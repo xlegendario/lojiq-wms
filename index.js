@@ -2641,7 +2641,10 @@ app.post("/api/submit-partner-intake", async (req, res) => {
           size: asText(item.size),
           quantity: Number(item.quantity),
           partner_price: item.partner_price,
-          markup: item.markup
+          markup: item.markup,
+          // What the partner pays us to send this pair on. Left empty here
+          // means his own standard fee, which the portal fills in.
+          forwarding_fee: item.forwarding_fee
         }))
       },
       { timeoutMs: 60000 }
@@ -4335,7 +4338,21 @@ async function listSendcloudContracts(carrierCode) {
       name: c.name || c.client_id || null,
       is_active: c.is_active ?? null,
       is_default: c.is_default ?? null,
-      type: c.type || (c.is_sendcloud ? "sendcloud" : null)
+      type: c.type || (c.is_sendcloud ? "sendcloud" : null),
+
+      /*
+       * Everything else Sendcloud says about it.
+       *
+       * The six fields above answered "which id do I pass". They do not
+       * answer "why did it refuse this parcel", and that is the question
+       * that actually comes up: a contract is tied to where a parcel starts
+       * as well as who carries it, and a consignor in Spain on an account
+       * with contracts for AT, FR and IT gets "No subbroker contract
+       * found" with no way to see that from here.
+       *
+       * Dry run only, so this is read by a person looking for exactly that.
+       */
+      raw: c
     }));
 }
 
