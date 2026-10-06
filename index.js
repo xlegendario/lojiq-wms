@@ -4558,6 +4558,14 @@ async function createMarketplaceLabel({
         phone: customerAddress.phone || SENDCLOUD_MARKETPLACE_FALLBACK_PHONE
       },
       senderCountry: await sendcloudSenderCountry(SENDCLOUD_MARKETPLACE_SENDER_ADDRESS_ID) || "unknown",
+
+      /*
+       * Everything Sendcloud says about the method we picked.
+       *
+       * A method belongs to a contract, and passing a contract that does
+       * not own it is its own refusal. Only visible from here.
+       */
+      methodRaw: method,
       contractId: contractId
         || await pickSendcloudContract(carrier, await sendcloudSenderCountry(SENDCLOUD_MARKETPLACE_SENDER_ADDRESS_ID))
         || "none for our sender country - Sendcloud would have to choose",
