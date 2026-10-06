@@ -4357,6 +4357,43 @@ async function listSendcloudContracts(carrierCode) {
 }
 
 /*
+ * The contract that pays for a parcel leaving this country.
+ *
+ * A Sendcloud contract is tied to where a parcel STARTS as well as to who
+ * carries it: the account has one per origin - NL, BE, DE, ES, GB, AT, FR,
+ * IT - and not one of them is marked as the default. Sending no contract at
+ * all leaves Sendcloud to choose between eight, and it refuses rather than
+ * guess: "No subbroker contract found. Please contact customer support."
+ *
+ * ORD-027542 was a consignor in Spain, and the Spanish contract was sitting
+ * right there, active. Nothing was missing; nobody said which one.
+ *
+ * Null when there is none for that country, which is a real answer: then
+ * the parcel genuinely cannot go on our rates and the error from Sendcloud
+ * is the right one to see.
+ */
+async function pickSendcloudContract(carrier, fromCountry) {
+  const country = asText(fromCountry).toUpperCase();
+
+  if (!country) return null;
+
+  const contracts = await listSendcloudContracts(asText(carrier).toLowerCase())
+    .catch((error) => {
+      console.warn("Could not read the Sendcloud contracts:", error.message);
+
+      return [];
+    });
+
+  if (!Array.isArray(contracts)) return null;
+
+  const hit = contracts.find(
+    (c) => c.is_active && asText(c?.raw?.country).toUpperCase() === country
+  );
+
+  return hit ? hit.id : null;
+}
+
+/*
  * Our own warehouse, as an address to ship to.
  *
  * Same shape as a shopper's address so the rest of the label machinery does
@@ -4477,11 +4514,26 @@ async function createMarketplaceLabel({
         ...customerAddress,
         phone: customerAddress.phone || SENDCLOUD_MARKETPLACE_FALLBACK_PHONE
       },
-      contractId: contractId || "account default",
+      contractId: contractId
+        || await pickSendcloudContract(carrier, sellerCountryCode)
+        || "none for " + (sellerCountryCode || "?") + " - Sendcloud would have to choose",
       contracts: await listSendcloudContracts(carrier.toLowerCase()).catch((error) => ({ error: error.message })),
       wouldDeliverTo:
         asText(orderFields["Claimed Channel ID"]) || "the consignor's own labels channel"
     };
+  }
+
+  /*
+    Asked for by hand when somebody is overruling it; otherwise the one that
+    belongs to the country this parcel leaves from.
+  */
+  const payingContract = contractId || await pickSendcloudContract(carrier, sellerCountryCode);
+
+  if (payingContract) {
+    console.log(
+      `${orderId}: ${carrier} on Sendcloud contract ${payingContract}` +
+        `${contractId ? " (asked for)" : ` (${sellerCountryCode || "?"})`}.`
+    );
   }
 
   const sendcloud = await createSendcloudLabel({
@@ -4493,7 +4545,7 @@ async function createMarketplaceLabel({
     senderAddressId: SENDCLOUD_MARKETPLACE_SENDER_ADDRESS_ID,
     weightKg: SENDCLOUD_MARKETPLACE_WEIGHT_KG,
     fallbackPhone: SENDCLOUD_MARKETPLACE_FALLBACK_PHONE,
-    contractId
+    contractId: payingContract
   });
 
   const labelPdfBuffer = await fetchBuffer(sendcloud.labelUrl, {
