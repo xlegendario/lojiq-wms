@@ -4357,6 +4357,49 @@ async function listSendcloudContracts(carrierCode) {
 }
 
 /*
+ * Where our parcels leave from, according to Sendcloud.
+ *
+ * Every label is made with our own sender address, so this is one country
+ * and it does not move. Asked rather than written down: an address that is
+ * changed in the panel would otherwise quietly keep billing the old
+ * country's contract, and that is the kind of thing nobody notices for
+ * months.
+ *
+ * Held for an hour. It is one number per account and the lookup is only
+ * there so nothing has to be kept in step by hand.
+ */
+let senderCountryCache = { at: 0, byId: new Map() };
+
+async function sendcloudSenderCountry(senderAddressId) {
+  const id = asText(senderAddressId);
+
+  if (!id) return "";
+
+  if (Date.now() - senderCountryCache.at > 3_600_000) {
+    senderCountryCache = { at: Date.now(), byId: new Map() };
+  }
+
+  if (senderCountryCache.byId.has(id)) return senderCountryCache.byId.get(id);
+
+  const res = await fetch("https://panel.sendcloud.sc/api/v2/user/addresses/sender", {
+    headers: { Authorization: buildBasicAuthHeader(SENDCLOUD_PUBLIC_KEY, SENDCLOUD_SECRET_KEY) }
+  }).catch((error) => {
+    console.warn("Could not read the Sendcloud sender addresses:", error.message);
+
+    return null;
+  });
+
+  const body = res && res.ok ? await res.json().catch(() => ({})) : {};
+  const addresses = body.sender_addresses || body.data || [];
+
+  for (const address of addresses) {
+    senderCountryCache.byId.set(String(address.id), asText(address.country).toUpperCase());
+  }
+
+  return senderCountryCache.byId.get(id) || "";
+}
+
+/*
  * The contract that pays for a parcel leaving this country.
  *
  * A Sendcloud contract is tied to where a parcel STARTS as well as to who
@@ -4514,9 +4557,10 @@ async function createMarketplaceLabel({
         ...customerAddress,
         phone: customerAddress.phone || SENDCLOUD_MARKETPLACE_FALLBACK_PHONE
       },
+      senderCountry: await sendcloudSenderCountry(SENDCLOUD_MARKETPLACE_SENDER_ADDRESS_ID) || "unknown",
       contractId: contractId
-        || await pickSendcloudContract(carrier, sellerCountryCode)
-        || "none for " + (sellerCountryCode || "?") + " - Sendcloud would have to choose",
+        || await pickSendcloudContract(carrier, await sendcloudSenderCountry(SENDCLOUD_MARKETPLACE_SENDER_ADDRESS_ID))
+        || "none for our sender country - Sendcloud would have to choose",
       contracts: await listSendcloudContracts(carrier.toLowerCase()).catch((error) => ({ error: error.message })),
       wouldDeliverTo:
         asText(orderFields["Claimed Channel ID"]) || "the consignor's own labels channel"
@@ -4525,14 +4569,23 @@ async function createMarketplaceLabel({
 
   /*
     Asked for by hand when somebody is overruling it; otherwise the one that
-    belongs to the country this parcel leaves from.
+    belongs to the country the parcel leaves from - which is where OUR
+    sender address is, not where the consignor sits.
+
+    FIXED - this took the consignor's country, which is only ever used to
+    decide the courier: DPD cannot collect in Spain and UPS can, so a
+    Spanish consignor ships UPS. The parcel itself still leaves from our own
+    address, so it is our country's contract that pays for it. Billing a
+    Dutch parcel to the Spanish contract is wrong even when Sendcloud
+    accepts it.
   */
-  const payingContract = contractId || await pickSendcloudContract(carrier, sellerCountryCode);
+  const fromCountry = await sendcloudSenderCountry(SENDCLOUD_MARKETPLACE_SENDER_ADDRESS_ID);
+  const payingContract = contractId || await pickSendcloudContract(carrier, fromCountry);
 
   if (payingContract) {
     console.log(
       `${orderId}: ${carrier} on Sendcloud contract ${payingContract}` +
-        `${contractId ? " (asked for)" : ` (${sellerCountryCode || "?"})`}.`
+        `${contractId ? " (asked for)" : ` (sender ${fromCountry || "?"})`}.`
     );
   }
 
