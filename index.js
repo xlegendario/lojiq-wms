@@ -4882,6 +4882,7 @@ app.post("/api/request-label", async (req, res) => {
           orderId,
           dry: req.body?.dry === true,
           contractId: /^\d+$/.test(asText(req.body?.contract_id)) ? asText(req.body.contract_id) : null,
+          methodId: /^\d+$/.test(asText(req.body?.shipping_method_id)) ? asText(req.body.shipping_method_id) : null,
           toWarehouse: req.body?.to_warehouse === true
         })
       );
