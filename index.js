@@ -472,7 +472,9 @@ async function findSendcloudShippingMethod({
     );
   }
 
-  return { id: match.id, name: asText(match.name) };
+  // raw: what Sendcloud says about it, which is where the contract behind a
+  // method lives. Carried along for the dry run only.
+  return { id: match.id, name: asText(match.name), raw: match };
 }
 
 function buildSendcloudOrderNumber(orderId, storeName, shopifyOrderNumber) {
