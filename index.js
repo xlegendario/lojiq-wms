@@ -4640,20 +4640,28 @@ async function createMarketplaceLabel({
     accepts it.
   */
   /*
-    REVERTED - and it is worth saying why.
+    Which contract pays, named rather than left to Sendcloud.
 
-    Choosing a contract by our sender country did not fix the refusal, and
-    it can make a worse one. A Sendcloud contract hangs off a BRAND, and
-    this account has two: 432314 Lojiq Plug & Play Fulfillment on one, and
-    920004 UNION Amsterdam - the address every marketplace label names - on
-    another. Handing a label from one brand a contract that belongs to the
-    other is a guess with somebody else's money behind it.
+    This worked for three weeks and broke in the first week of October. The
+    account tells the story: five contracts with ids around 1000-17000, and
+    two added since - 114067 UPS DAP FR and 114068 UPS DAP AT. Not one of
+    the eight is marked as the default.
 
-    So back to naming one only when a person does, which is what
-    contract_id is for. The refusal is about the sender address, and that is
-    a decision about which company ships, not something to paper over here.
+    While there was one UPS contract to choose, Sendcloud chose it. With
+    several it refuses rather than guess, and says so in a sentence that
+    reads like there is none at all: "No subbroker contract found. Please
+    contact customer support."
+
+    The country is the one the parcel LEAVES from - our own sender address -
+    and not the consignor's. His country only decides the courier: DPD
+    cannot collect in Spain and UPS can.
+
+    Asked for by hand still wins. No contract for our sender country is a
+    real answer and stays one: then Sendcloud's refusal is the right thing
+    to see.
   */
-  const payingContract = contractId;
+  const fromCountry = await sendcloudSenderCountry(SENDCLOUD_MARKETPLACE_SENDER_ADDRESS_ID);
+  const payingContract = contractId || await pickSendcloudContract(carrier, fromCountry);
 
   if (payingContract) {
     console.log(
