@@ -4778,6 +4778,53 @@ async function createMarketplaceLabel({
   };
 }
 
+/*
+ * A parcel we already made, as Sendcloud holds it.
+ *
+ * Read-only, and there for one question: a label that worked and a label
+ * that is refused differ somewhere, and the only place to see where is in
+ * the parcel Sendcloud kept. Looked up by the order number we gave it.
+ */
+app.get("/api/sendcloud/parcel", async (req, res) => {
+  try {
+    const orderNumber = asText(req.query.order_number);
+
+    if (!orderNumber) return res.status(400).json({ error: "Missing order_number" });
+
+    const url = new URL("https://panel.sendcloud.sc/api/v2/parcels");
+    url.searchParams.set("order_number", orderNumber);
+
+    const r = await fetch(url, {
+      headers: { Authorization: buildBasicAuthHeader(SENDCLOUD_PUBLIC_KEY, SENDCLOUD_SECRET_KEY) }
+    });
+
+    const body = await r.json().catch(() => ({}));
+
+    if (!r.ok) return res.status(r.status).json({ error: JSON.stringify(body).slice(0, 400) });
+
+    const parcels = body.parcels || [];
+
+    return res.json({
+      found: parcels.length,
+      parcels: parcels.map((parcel) => ({
+        id: parcel.id,
+        order_number: parcel.order_number,
+        status: parcel.status?.message,
+        carrier: parcel.carrier?.code,
+        method: parcel.shipment?.name,
+        method_id: parcel.shipment?.id,
+        contract: parcel.contract ?? null,
+        brand_id: parcel.brand_id ?? null,
+        sender_address: parcel.sender_address ?? null,
+        country: parcel.country?.iso_2,
+        date: parcel.date_created
+      }))
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 app.post("/api/request-label", async (req, res) => {
   try {
     const source = asText(req.body?.source);
