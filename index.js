@@ -4618,8 +4618,21 @@ async function createMarketplaceLabel({
     Dutch parcel to the Spanish contract is wrong even when Sendcloud
     accepts it.
   */
-  const fromCountry = await sendcloudSenderCountry(SENDCLOUD_MARKETPLACE_SENDER_ADDRESS_ID);
-  const payingContract = contractId || await pickSendcloudContract(carrier, fromCountry);
+  /*
+    REVERTED - and it is worth saying why.
+
+    Choosing a contract by our sender country did not fix the refusal, and
+    it can make a worse one. A Sendcloud contract hangs off a BRAND, and
+    this account has two: 432314 Lojiq Plug & Play Fulfillment on one, and
+    920004 UNION Amsterdam - the address every marketplace label names - on
+    another. Handing a label from one brand a contract that belongs to the
+    other is a guess with somebody else's money behind it.
+
+    So back to naming one only when a person does, which is what
+    contract_id is for. The refusal is about the sender address, and that is
+    a decision about which company ships, not something to paper over here.
+  */
+  const payingContract = contractId;
 
   if (payingContract) {
     console.log(
