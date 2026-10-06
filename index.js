@@ -553,7 +553,28 @@ async function createSendcloudLabel({
   const body = await res.json().catch(() => ({}));
 
   if (!res.ok) {
-    throw new Error(`Sendcloud create parcel failed: ${res.status} ${JSON.stringify(body)}`);
+    const said = JSON.stringify(body);
+
+    /*
+     * Sendcloud's own words, plus the one thing they leave out.
+     *
+     * "No subbroker contract found. Please contact customer support." reads
+     * like the account has no contract at all. It has eight. What it does
+     * not have is one for the BRAND behind the sender address on this
+     * label: contracts hang off a brand, and this account carries two
+     * companies. Two days went into finding that out from a sentence that
+     * pointed at support.
+     */
+    if (/subbroker|contract/i.test(said)) {
+      throw new Error(
+        `Sendcloud create parcel failed: ${res.status} ${said}` +
+          ` - sender address ${senderAddressId || "account default"}.` +
+          " A Sendcloud contract hangs off the brand of that sender address," +
+          " so this is about which company the label goes out as, not about the carrier."
+      );
+    }
+
+    throw new Error(`Sendcloud create parcel failed: ${res.status} ${said}`);
   }
 
   const parcel = body?.parcel || {};
