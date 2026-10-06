@@ -4372,6 +4372,25 @@ async function listSendcloudContracts(carrierCode) {
  */
 let senderCountryCache = { at: 0, byId: new Map() };
 
+async function listSendcloudSenderAddresses() {
+  const res = await fetch("https://panel.sendcloud.sc/api/v2/user/addresses/sender", {
+    headers: { Authorization: buildBasicAuthHeader(SENDCLOUD_PUBLIC_KEY, SENDCLOUD_SECRET_KEY) }
+  });
+
+  const body = await res.json().catch(() => ({}));
+
+  if (!res.ok) return { error: res.status + " " + JSON.stringify(body).slice(0, 200) };
+
+  return (body.sender_addresses || body.data || []).map((a) => ({
+    id: a.id,
+    company: a.company_name || a.contact_name || null,
+    country: a.country,
+    city: a.city,
+    postal: a.postal_code,
+    raw: a
+  }));
+}
+
 async function sendcloudSenderCountry(senderAddressId) {
   const id = asText(senderAddressId);
 
@@ -4568,6 +4587,16 @@ async function createMarketplaceLabel({
        * not own it is its own refusal. Only visible from here.
        */
       methodRaw: method,
+
+      /*
+       * The sender addresses on the account.
+       *
+       * A contract hangs off a sender address in Sendcloud. Every label that
+       * works goes out on the account default; the marketplace ones name
+       * 920004, and that is the one difference between a label that is made
+       * and a label that comes back "No subbroker contract found".
+       */
+      senderAddresses: await listSendcloudSenderAddresses().catch((e) => ({ error: e.message })),
       contractId: contractId
         || await pickSendcloudContract(carrier, await sendcloudSenderCountry(SENDCLOUD_MARKETPLACE_SENDER_ADDRESS_ID))
         || "none for our sender country - Sendcloud would have to choose",
