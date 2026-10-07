@@ -4746,6 +4746,22 @@ async function createMarketplaceLabel({
         "Shipping Label": [
           { url: uploadedPdfUrl, filename: `${sanitizeFileName(orderId)}.pdf` }
         ],
+        /*
+          FIXED - the consignor got the same label twice.
+
+          sendShippingLabelToDiscord in the automation engine runs on any
+          order that has a Shipping Label and has not been marked as told,
+          and posts the Shipping Label Ready embed through
+          /send-label-to-channel. This flow attaches the label AND posts that
+          embed itself a few lines down, so the automation saw an untold
+          label and sent a second, identical one. Two embeds, same order,
+          same tracking, on every bol label a consignor asked for.
+
+          Marked here rather than after posting, and in the same write as the
+          label: the automation reads the record as the change leaves it, so
+          anything written later is a race it can win.
+        */
+        "Label Sent To Discord?": true,
         "Label Error Message": null
       }
   );

@@ -670,12 +670,13 @@
                 <th>Quantity</th>
                 <th class="price-col" id="priceHeader" hidden>Partner €</th>
                 <th class="price-col" id="markupHeader" hidden>Markup €</th>
+                <th class="price-col" id="feeHeader" hidden>Fee €</th>
                 <th></th>
               </tr>
             </thead>
             <tbody id="itemsTableBody">
               <tr>
-                <td colspan="8" class="empty">No items scanned yet</td>
+                <td colspan="9" class="empty">No items scanned yet</td>
               </tr>
             </tbody>
           </table>
@@ -838,6 +839,19 @@
     let partyOptionsHtml = "";
     let partyListKind = "parties";
 
+    // The chosen partner's own forwarding fee, which every line starts on.
+    // Null when no partner is chosen yet, or when his fee is not filled in.
+    function selectedPartnerFee() {
+      const chosen = String(partySelect.value || "");
+
+      if (!chosen.startsWith("partner:")) return null;
+
+      const partner = partnerOptions.find((one) => `partner:${one.id}` === chosen);
+      const fee = Number(partner?.forwarding_fee);
+
+      return Number.isFinite(fee) && fee > 0 ? fee : null;
+    }
+
     function updatePriceHeaders() {
       const mode = currentPriceMode();
       const priceHeader = document.getElementById("priceHeader");
@@ -847,6 +861,16 @@
       priceHeader.hidden = !(mode === "partner" || mode === "direct");
       priceHeader.textContent = mode === "direct" ? "Purchase €" : "Partner €";
       markupHeader.hidden = mode !== "partner";
+
+      /*
+       * The forwarding fee belongs to every partner parcel, listed or not.
+       *
+       * It is what the partner pays us per pair to send it on, and it is
+       * agreed when the goods come in: clothing cheaper than shoes, and some
+       * shoes dearer. His own standard fee is filled in, and a line that was
+       * agreed differently is simply typed over.
+       */
+      document.getElementById("feeHeader").hidden = !PARTNER_TYPES.includes(typeSelect.value);
 
       const type = typeSelect.value;
 
@@ -1095,7 +1119,7 @@
       if (items.length === 0) {
         itemsTableBody.innerHTML = `
           <tr>
-            <td colspan="8" class="empty">No items scanned yet</td>
+            <td colspan="9" class="empty">No items scanned yet</td>
           </tr>
         `;
         updateStatusPanel();
@@ -1105,6 +1129,8 @@
       const priceMode = currentPriceMode();
       const showPrice = priceMode === "partner" || priceMode === "direct";
       const showMarkup = priceMode === "partner";
+      const showFee = PARTNER_TYPES.includes(typeSelect.value);
+      const standardFee = selectedPartnerFee();
 
       itemsTableBody.innerHTML = items.map((item, index) => `
         <tr>
@@ -1159,6 +1185,17 @@
               placeholder="Markup"
               data-index="${index}"
               data-field="markup"
+            />
+          </td>
+          <td class="price-col" ${showFee ? "" : "hidden"}>
+            <input
+              type="text"
+              inputmode="decimal"
+              class="price-input"
+              value="${escapeHtml(item.forwarding_fee ?? (standardFee === null ? "" : String(standardFee)))}"
+              placeholder="Fee"
+              data-index="${index}"
+              data-field="forwarding_fee"
             />
           </td>
           <td>
@@ -1592,7 +1629,8 @@
               size: item.size.trim(),
               quantity: item.quantity,
               partner_price: item.partner_price ?? "",
-              markup: item.markup ?? ""
+              markup: item.markup ?? "",
+              forwarding_fee: item.forwarding_fee ?? ""
             }))
           })
         });
@@ -1901,7 +1939,7 @@
         return;
       }
 
-      if (field === "partner_price" || field === "markup") {
+      if (field === "partner_price" || field === "markup" || field === "forwarding_fee") {
         items[index][field] = target.value.trim();
         return;
       }
@@ -1933,7 +1971,11 @@
 
       if (target.dataset.field === "sku") {
         loadProductInfo(item, { learn: true });
-      } else if (target.dataset.field === "partner_price" || target.dataset.field === "markup") {
+      } else if (
+        target.dataset.field === "partner_price" ||
+        target.dataset.field === "markup" ||
+        target.dataset.field === "forwarding_fee"
+      ) {
         fillSameSku(index, target.dataset.field);
       }
     });
@@ -1943,6 +1985,10 @@
       updatePriceHeaders();
       renderTable();
     });
+
+    // Choosing the partner is what decides the standard fee, so the rows are
+    // drawn again with his number in them.
+    partySelect.addEventListener("change", () => renderTable());
 
     itemsTableBody.addEventListener("click", (event) => {
       const button = event.target.closest("[data-delete-index]");
