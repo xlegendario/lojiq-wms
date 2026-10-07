@@ -1690,7 +1690,7 @@ function isStoreSellerRecord(sellerRecord) {
   return Array.isArray(merchants) && merchants.length > 0;
 }
 
-async function sendLabelToLojiqStoreChannel({ channelId, orderId, trackingNumber, labelUrl, productName, sku, size }) {
+async function sendLabelToLojiqStoreChannel({ channelId, orderId, trackingNumber, labelUrl, productName, sku, size, items = [] }) {
   const secret = process.env.COUNTER_OFFERS_SECRET;
 
   if (!secret) {
@@ -1711,13 +1711,15 @@ async function sendLabelToLojiqStoreChannel({ channelId, orderId, trackingNumber
         {
           title: "📦 Shipping Label Ready",
           color: 0x2F80ED,
-          description:
-            `**Product:** ${productName || "-"}\n` +
-            `**SKU:** ${sku || "-"}\n` +
-            `**Size:** ${size || "-"}\n\n` +
-            `**Order:** ${orderId}\n` +
-            `**Tracking:** ${trackingNumber || "-"}\n\n` +
-            `[📄 Download Label](${labelUrl})`,
+          description: labelEmbedDescription({
+            items,
+            orderId,
+            trackingNumber,
+            labelUrl,
+            productName,
+            sku,
+            size
+          }),
           footer: { text: "Lojiq" }
         }
       ],
@@ -1742,6 +1744,7 @@ async function sendFinalLabelToDiscordChannel({
   productName,
   sku,
   size,
+  items = [],
   markLabelOk = true
 }) {
   if (!process.env.DISCORD_TOKEN) {
@@ -1758,13 +1761,15 @@ async function sendFinalLabelToDiscordChannel({
       {
         title: "📦 Shipping Label Ready",
         color: 0x00b894,
-        description:
-          `**Product:** ${productName || "-"}\n` +
-          `**SKU:** ${sku || "-"}\n` +
-          `**Size:** ${size || "-"}\n\n` +
-          `**Order:** ${orderId}\n` +
-          `**Tracking:** ${trackingNumber}\n\n` +
-          `[📄 Download Label](${labelUrl})`,
+        description: labelEmbedDescription({
+          items,
+          orderId,
+          trackingNumber,
+          labelUrl,
+          productName,
+          sku,
+          size
+        }),
         footer: {
           text: asText(channelId)
             ? "Kickz Caviar"
@@ -1803,7 +1808,8 @@ async function sendFinalLabelToDiscordDM({
   labelUrl,
   productName,
   sku,
-  size
+  size,
+  items = []
 }) {
   if (!process.env.DISCORD_TOKEN) {
     throw new Error("Missing DISCORD_TOKEN");
@@ -1850,13 +1856,15 @@ async function sendFinalLabelToDiscordDM({
         {
           title: "📦 Shipping Label Ready",
           color: 0x00b894,
-          description:
-            `**Product:** ${productName || "-"}\n` +
-            `**SKU:** ${sku || "-"}\n` +
-            `**Size:** ${size || "-"}\n\n` +
-            `**Order:** ${orderId}\n` +
-            `**Tracking:** ${trackingNumber}\n\n` +
-            `[📄 Download Label](${labelUrl})`,
+          description: labelEmbedDescription({
+            items,
+            orderId,
+            trackingNumber,
+            labelUrl,
+            productName,
+            sku,
+            size
+          }),
           footer: {
             text: "Kickz Caviar"
           }
@@ -4521,6 +4529,148 @@ function warehouseAddress() {
   };
 }
 
+/*
+ * The other pairs that belong in the same box.
+ *
+ * A marketplace order can hold more than one pair, and when they come off
+ * the same consignor's shelf he has one parcel to post, not two. Asked for
+ * a label on each deal he was given two of them: two boxes, two trips, two
+ * shipments we pay for, and a shopper who gets his order in instalments.
+ * bol order C000HMW746 (07-10-2026) was two Fear of God pieces from one
+ * seller, and that is exactly what happened.
+ *
+ * One parcel means one shopper at one address served from one shelf, so the
+ * group is precisely that: the marketplace's own order number plus the
+ * consignor. Rows that already carry a label are left out - their parcel was
+ * made already, and a second label over it would send the shopper chasing a
+ * tracking number that no longer covers his pair.
+ *
+ * A lookup that fails returns nothing rather than throwing. Two labels is a
+ * poor outcome; no label at all, for a consignor standing in the post
+ * office, is a worse one.
+ */
+const PARCEL_READY_STATUSES = new Set([
+  "Allocated",
+  "Requested Label",
+  "Ready to Ship"
+]);
+
+/*
+ * The orders that already travel on a tracking number.
+ *
+ * Read the other way round from parcelSiblingOrders: that one asks which
+ * pairs should go in a box, this one asks which pairs are in a box already.
+ */
+async function ordersOnTracking(trackingNumber, excludeRecordId = "") {
+  const number = asText(trackingNumber);
+
+  if (!number) return [];
+
+  const rows = await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE)
+    .select({
+      filterByFormula: `{Tracking Number} = '${escapeFormulaValue(number)}'`,
+      pageSize: 50
+    })
+    .firstPage()
+    .catch(() => []);
+
+  return rows.filter((row) => row.id !== excludeRecordId);
+}
+
+async function parcelSiblingOrders({ orderRecord, orderFields, toWarehouse = false }) {
+  const orderNumber = asText(orderFields["Shopify Order Number"]);
+  const sellerRecordId = first(orderFields["Linked Seller ID"]);
+  const marketplace = asText(orderFields["Marketplace"]).toLowerCase();
+
+  // No order number, or a pair nobody holds yet: nothing to group on.
+  if (!orderNumber || !sellerRecordId) return [];
+
+  const rows = await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE)
+    .select({
+      filterByFormula: `{Shopify Order Number} = '${escapeFormulaValue(orderNumber)}'`,
+      pageSize: 50
+    })
+    .firstPage()
+    .catch((error) => {
+      console.error(
+        `Could not look for the other pairs in ${orderNumber}:`,
+        error.message
+      );
+
+      return [];
+    });
+
+  return rows.filter((row) => {
+    if (row.id === orderRecord.id) return false;
+
+    const f = row.fields || {};
+
+    if (first(f["Linked Seller ID"]) !== sellerRecordId) return false;
+    if (asText(f["Marketplace"]).toLowerCase() !== marketplace) return false;
+    if (!PARCEL_READY_STATUSES.has(asText(f["Fulfillment Status"]))) return false;
+
+    const alreadyLabelled = toWarehouse
+      ? asText(f["Inbound Tracking Number"]) || asText(f["Inbound Label URL"])
+      : asText(f["Tracking Number"]) ||
+        (Array.isArray(f["Shipping Label"]) && f["Shipping Label"].length > 0);
+
+    return !alreadyLabelled;
+  });
+}
+
+/*
+ * What a label covers, said once for every road it travels.
+ *
+ * One pair reads exactly as it always did - the three lines, the order, the
+ * tracking - because that is what nearly every label is. Two or more lead
+ * with the instruction, because a consignor who reads it as two labels for
+ * two pairs posts two boxes carrying the same number, and the second one is
+ * lost the moment it leaves his hands.
+ */
+function labelEmbedDescription({
+  items,
+  orderId,
+  trackingNumber,
+  labelUrl,
+  productName,
+  sku,
+  size
+}) {
+  const pairs =
+    Array.isArray(items) && items.length
+      ? items
+      : [{ orderId, productName, sku, size }];
+
+  if (pairs.length === 1) {
+    const only = pairs[0];
+
+    return (
+      `**Product:** ${only.productName || "-"}\n` +
+      `**SKU:** ${only.sku || "-"}\n` +
+      `**Size:** ${only.size || "-"}\n\n` +
+      `**Order:** ${only.orderId || orderId || "-"}\n` +
+      `**Tracking:** ${trackingNumber || "-"}\n\n` +
+      `[📄 Download Label](${labelUrl})`
+    );
+  }
+
+  const lines = pairs
+    .map(
+      (pair, index) =>
+        `**${index + 1}.** ${pair.productName || "-"}\n` +
+        `${pair.sku || "-"} · Size ${pair.size || "-"} · ${pair.orderId || "-"}`
+    )
+    .join("\n\n");
+
+  return (
+    `**${pairs.length} items, one parcel.**\n` +
+    `Put them in ONE box. This label covers all of them - do not post them separately.\n\n` +
+    `${lines}\n\n` +
+    `**Tracking:** ${trackingNumber || "-"}\n\n` +
+    `[📄 Download Label](${labelUrl})`
+  );
+}
+
 async function createMarketplaceLabel({
   orderRecord,
   orderFields,
@@ -4551,6 +4701,42 @@ async function createMarketplaceLabel({
   }
 
   const sellerCountryCode = await getSellerCountryCodeFromOrderFields(orderFields);
+
+  /*
+    Everything that travels in this parcel, this order first.
+
+    Found before the carrier is picked, because the weight depends on it and
+    the weight decides the price of the label we are about to buy.
+  */
+  const siblings = await parcelSiblingOrders({ orderRecord, orderFields, toWarehouse });
+
+  const parcel = [
+    { recordId: orderRecord.id, fields: orderFields },
+    ...siblings.map((row) => ({ recordId: row.id, fields: row.fields || {} }))
+  ];
+
+  const parcelItems = parcel.map((row) => ({
+    orderId: asText(row.fields["Order ID"]) || row.recordId,
+    productName: asText(row.fields["Product Name"]),
+    sku: asText(row.fields["SKU (Soft)"]) || asText(row.fields["SKU"]),
+    size: asText(row.fields["Size"])
+  }));
+
+  /*
+    A box with two pairs in it weighs two pairs. The flat figure is what one
+    pair costs us on the shelf; billed for one while shipping two is how a
+    parcel gets held at the depot for the difference.
+  */
+  const parcelWeightKg = (
+    Number(SENDCLOUD_MARKETPLACE_WEIGHT_KG) * parcel.length
+  ).toFixed(2);
+
+  if (parcel.length > 1) {
+    console.log(
+      `${orderId}: one parcel for ${parcel.length} items - ` +
+        `${parcelItems.map((item) => item.orderId).join(", ")}`
+    );
+  }
 
   /*
     DPD where it reaches, UPS everywhere else, and UPS again if DPD turns
@@ -4616,7 +4802,8 @@ async function createMarketplaceLabel({
       carrier,
       method: `${method.name} (#${method.id})`,
       senderAddressId: SENDCLOUD_MARKETPLACE_SENDER_ADDRESS_ID || "NOT SET - would use the account default",
-      weightKg: SENDCLOUD_MARKETPLACE_WEIGHT_KG,
+      parcel: parcelItems,
+      weightKg: parcelWeightKg,
       shipTo: {
         ...customerAddress,
         phone: customerAddress.phone || SENDCLOUD_MARKETPLACE_FALLBACK_PHONE
@@ -4699,7 +4886,7 @@ async function createMarketplaceLabel({
     storeName: asText(orderFields["Marketplace"]) || asText(orderFields["Store Name"]),
     shopifyOrderNumber: asText(orderFields["Shopify Order Number"]),
     senderAddressId: SENDCLOUD_MARKETPLACE_SENDER_ADDRESS_ID,
-    weightKg: SENDCLOUD_MARKETPLACE_WEIGHT_KG,
+    weightKg: parcelWeightKg,
     fallbackPhone: SENDCLOUD_MARKETPLACE_FALLBACK_PHONE,
     contractId: payingContract
   });
@@ -4722,9 +4909,19 @@ async function createMarketplaceLabel({
     stays Allocated as well: Fulfillment Status has twenty-five values read
     by six services, and a pair still in Italy is not Requested Label.
   */
-  await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).update(
-    orderRecord.id,
-    toWarehouse
+  /*
+    Every pair in the parcel gets the same label, the same tracking and the
+    same status.
+
+    A row left behind keeps a Request Label button under it, and the pair is
+    already in the box - so the second click would buy a second label for a
+    parcel that is on its way. It also leaves the marketplace with nothing
+    to report for that item.
+  */
+  for (const row of parcel) {
+    await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).update(
+      row.recordId,
+      toWarehouse
       ? {
         "Inbound Status": "Awaiting Shipment",
         "Inbound Tracking Number": sendcloud.trackingNumber,
@@ -4764,7 +4961,8 @@ async function createMarketplaceLabel({
         "Label Sent To Discord?": true,
         "Label Error Message": null
       }
-  );
+    );
+  }
 
   /*
     Delivered, not stored. A label nobody is told about is the same as no
@@ -4793,7 +4991,15 @@ async function createMarketplaceLabel({
     labelUrl: uploadedPdfUrl,
     productName: asText(orderFields["Product Name"]),
     sku: asText(orderFields["SKU (Soft)"]) || asText(orderFields["SKU"]),
-    size: asText(orderFields["Size"])
+    size: asText(orderFields["Size"]),
+    /*
+      One message for the parcel, not one per pair.
+
+      Two embeds with the same tracking number on them read as two labels,
+      and a consignor who believes that posts two boxes. The embed names
+      every pair it covers instead.
+    */
+    items: parcelItems
   };
 
   if (!claimedChannelId && isStoreSellerRecord(sellerRecord)) {
@@ -4809,10 +5015,14 @@ async function createMarketplaceLabel({
 
   return {
     ok: true,
-    message: `Label created for ${orderId}`,
+    message:
+      parcel.length > 1
+        ? `One label for ${parcel.length} items: ${parcelItems.map((item) => item.orderId).join(", ")}`
+        : `Label created for ${orderId}`,
     carrier,
     method: method.name,
-    tracking_number: sendcloud.trackingNumber
+    tracking_number: sendcloud.trackingNumber,
+    parcel: parcelItems.map((item) => item.orderId)
   };
 }
 
@@ -4890,6 +5100,32 @@ app.post("/api/request-label", async (req, res) => {
       : [];
     
     if (existingTrackingNumber || existingShippingLabel.length > 0) {
+      /*
+        A pair that already travels in a parcel is not a mistake to report.
+
+        Two pairs from one consignor in one marketplace order share a label,
+        and both deals keep a Request Label button under them. Pressing the
+        second one is the natural thing to do, and being told "a label
+        already exists" reads like something went wrong - so he asks, or
+        worse, goes looking for a second label that must not exist.
+      */
+      const sameParcel = await ordersOnTracking(existingTrackingNumber, orderRecord.id);
+
+      if (sameParcel.length) {
+        const others = sameParcel
+          .map((row) => asText(row.fields?.["Order ID"]) || row.id)
+          .join(", ");
+
+        return res.status(200).json({
+          ok: true,
+          already_in_parcel: true,
+          message:
+            `${orderId} is already in the parcel with ${others}. ` +
+            `One box, one label, tracking ${existingTrackingNumber}.`,
+          tracking_number: existingTrackingNumber
+        });
+      }
+
       return res.status(400).json({
         error: `A label already exists for ${orderId}`
       });
@@ -5024,6 +5260,33 @@ app.post("/api/request-label", async (req, res) => {
 
     const shippingOptionCode = await getOutboundShippingOptionCode(customerAddress.country);
 
+    /*
+      A store order can hold two items from one consignor just as a
+      marketplace order can, and they travel the same way: one box, one
+      label. Same grouping, same reason - he is asked for one parcel and
+      billed for one.
+    */
+    const storeSiblings = await parcelSiblingOrders({ orderRecord, orderFields });
+
+    const storeParcel = [
+      { recordId: orderRecord.id, fields: orderFields },
+      ...storeSiblings.map((row) => ({ recordId: row.id, fields: row.fields || {} }))
+    ];
+
+    const storeParcelItems = storeParcel.map((row) => ({
+      orderId: asText(row.fields["Order ID"]) || row.recordId,
+      productName: asText(row.fields["Product Name"]),
+      sku: asText(row.fields["SKU (Soft)"]) || asText(row.fields["SKU"]),
+      size: asText(row.fields["Size"])
+    }));
+
+    if (storeParcel.length > 1) {
+      console.log(
+        `${orderId}: one parcel for ${storeParcel.length} items - ` +
+          `${storeParcelItems.map((item) => item.orderId).join(", ")}`
+      );
+    }
+
     const sendcloud = await createSendcloudLabel({
       customerAddress,
       shippingOptionCode,
@@ -5042,28 +5305,44 @@ app.post("/api/request-label", async (req, res) => {
       pdfBuffer: labelPdfBuffer
     });
 
-    await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).update(orderRecord.id, {
-      "Fulfillment Status": "Requested Label",
-      "Tracking Number": sendcloud.trackingNumber,
-      "Shipping Label": [
-        {
-          url: uploadedPdfUrl,
-          filename: `${sanitizeFileName(orderId)}.pdf`
-        }
-      ],
-      "Label Error Message": null
-    });
+    for (const row of storeParcel) {
+      const isTheOneAsked = row.recordId === orderRecord.id;
+
+      await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).update(row.recordId, {
+        "Fulfillment Status": "Requested Label",
+        "Tracking Number": sendcloud.trackingNumber,
+        "Shipping Label": [
+          {
+            url: uploadedPdfUrl,
+            filename: `${sanitizeFileName(orderId)}.pdf`
+          }
+        ],
+        /*
+          The others were told about in the embed below, which names every
+          item in the box. Without this the automation on untold labels
+          would post one more for each of them, and a second embed with the
+          same tracking number on it reads as a second parcel.
+        */
+        ...(isTheOneAsked ? {} : { "Label Sent To Discord?": true }),
+        "Label Error Message": null
+      });
+    }
 
     await sendFinalLabelToDiscordChannel({
       channelId: dealChannelId,
       orderId,
       trackingNumber: sendcloud.trackingNumber,
-      labelUrl: uploadedPdfUrl
+      labelUrl: uploadedPdfUrl,
+      items: storeParcelItems
     });
 
     return res.status(200).json({
       ok: true,
-      message: `Label created for ${orderId}`
+      message:
+        storeParcel.length > 1
+          ? `One label for ${storeParcel.length} items: ${storeParcelItems.map((item) => item.orderId).join(", ")}`
+          : `Label created for ${orderId}`,
+      parcel: storeParcelItems.map((item) => item.orderId)
     });
   } catch (error) {
     console.error("request-label failed:", error);
