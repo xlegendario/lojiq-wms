@@ -4581,6 +4581,16 @@ async function parcelSiblingOrders({ orderRecord, orderFields, toWarehouse = fal
   const orderNumber = asText(orderFields["Shopify Order Number"]);
   const sellerRecordId = first(orderFields["Linked Seller ID"]);
   const marketplace = asText(orderFields["Marketplace"]).toLowerCase();
+  /*
+    Whose order number it is, which matters more than it looks.
+
+    A marketplace number is its own in the world; a shop's is only its own
+    inside that shop, and plenty of them start counting at 1001. Two stores
+    with an order 1001 each, filled from the same consignor's shelf, would
+    look like one parcel and get one label - and one of the two shoppers
+    would never see his order.
+  */
+  const clientRecordId = first(orderFields["Client"]) || "";
 
   // No order number, or a pair nobody holds yet: nothing to group on.
   if (!orderNumber || !sellerRecordId) return [];
@@ -4607,6 +4617,7 @@ async function parcelSiblingOrders({ orderRecord, orderFields, toWarehouse = fal
 
     if (first(f["Linked Seller ID"]) !== sellerRecordId) return false;
     if (asText(f["Marketplace"]).toLowerCase() !== marketplace) return false;
+    if ((first(f["Client"]) || "") !== clientRecordId) return false;
     if (!PARCEL_READY_STATUSES.has(asText(f["Fulfillment Status"]))) return false;
 
     const alreadyLabelled = toWarehouse
