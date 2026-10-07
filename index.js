@@ -372,10 +372,18 @@ const MARKETPLACE_METHOD_BY_CARRIER = {
  * express "DPD where DPD reaches" - and a table of ids is wrong the day
  * Sendcloud renumbers a contract, silently, on the next label.
  *
- * Matched on the exact name, because the list is full of near misses: "UPS
- * Standard 1-2kg", "UPS Standard - Signature" and "UPS® Standard" all read
- * as UPS Standard to anything looser than this.
+ * Matched on the name, because the list is full of near misses: "UPS Standard
+ * 1-2kg", "UPS Standard - Signature" and "UPS Standard to Access Point" all
+ * read as UPS Standard to anything looser than this.
+ *
+ * FIXED - that match was on the exact string, and it counted "UPS® Standard"
+ * among the near misses. It is not one: ® is a trademark sign, not a service.
+ * A new UPS contract (352122, made in October 2026 when the old one was
+ * replaced) carries the plain service under that name and no other, so
+ * nothing matched and every UPS label was refused while the same label could
+ * be made by hand. The sign is now noise; a suffix still is not.
  */
+const SERVICE_NAME = (name) => asText(name).replace(/[®™©]/g, "").replace(/\s+/g, " ").trim();
 async function findSendcloudShippingMethod({
   carrier,
   toCountry,
@@ -425,7 +433,7 @@ async function findSendcloudShippingMethod({
     way their bands are cut.
   */
   const bandOf = (method) => {
-    const name = asText(method.name);
+    const name = SERVICE_NAME(method.name);
     const prefix = `${wantedName} `;
 
     if (!name.startsWith(prefix)) return null;
@@ -436,7 +444,7 @@ async function findSendcloudShippingMethod({
   };
 
   const match =
-    methods.find((method) => asText(method.name) === wantedName && onLane(method)) ||
+    methods.find((method) => SERVICE_NAME(method.name) === wantedName && onLane(method)) ||
     methods.find((method) => {
       const band = bandOf(method);
 
@@ -4471,11 +4479,25 @@ async function pickSendcloudContract(carrier, fromCountry) {
 
   if (!Array.isArray(contracts)) return null;
 
-  const hit = contracts.find(
+  const forHere = contracts.filter(
     (c) => c.is_active && asText(c?.raw?.country).toUpperCase() === country
   );
 
-  return hit ? hit.id : null;
+  /*
+    Still the first one, but no longer in silence. A contract that is replaced
+    stays on the account next to the one that replaced it, and taking the
+    wrong one bills a parcel to a UPS account nobody meant to use - which the
+    label itself never shows. So when there is more than one to choose from,
+    the log names them all and says which one went on the parcel.
+  */
+  if (forHere.length > 1) {
+    console.warn(
+      `${carrier} has ${forHere.length} active contracts for ${country}: ` +
+        `${forHere.map((c) => c.id).join(", ")}. Taking ${forHere[0].id}.`
+    );
+  }
+
+  return forHere.length ? forHere[0].id : null;
 }
 
 /*
