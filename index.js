@@ -5101,11 +5101,33 @@ app.get("/api/parcel-siblings", async (req, res) => {
     const orderRecord = await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).find(recordId);
     const orderFields = orderRecord.fields || {};
 
-    const siblings = await parcelSiblingOrders({ orderRecord, orderFields });
+    /*
+      Only where one label really does cover the lot.
+
+      A marketplace sale and a store that has us draw labels on its contract
+      both end in one parcel made here. A store that supplies its own labels
+      does not: it is asked once per order and uploads one label per order,
+      so the other item is still waiting for its own. Saying otherwise would
+      take the button away from a pair that nobody has a label for.
+    */
+    const marketplaceOrder = !!asText(orderFields["Marketplace"]);
+
+    const clientId = first(orderFields["Client"]);
+
+    const merchant = !marketplaceOrder && clientId
+      ? await airtable(AIRTABLE_MERCHANTS_TABLE).find(clientId).catch(() => null)
+      : null;
+
+    const bundles = marketplaceOrder || !!merchant?.fields?.["Labels On Contract?"];
+
+    const siblings = bundles
+      ? await parcelSiblingOrders({ orderRecord, orderFields })
+      : [];
 
     return res.json({
       ok: true,
       order_id: asText(orderFields["Order ID"]) || recordId,
+      bundles,
       siblings: siblings.map((row) => ({
         record_id: row.id,
         order_id: asText(row.fields?.["Order ID"]) || row.id
