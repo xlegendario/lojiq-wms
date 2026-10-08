@@ -1322,7 +1322,7 @@
       row.className = "tracking-row";
       row.innerHTML = `
         <input class="input tracking-input" type="text" placeholder="Tracking number" autocomplete="off" />
-        <input class="tracking-file" type="file" accept="application/pdf" aria-label="Label PDF" />
+        <input class="tracking-file" type="file" accept="application/pdf,image/jpeg,image/png" aria-label="Label (PDF, JPEG or PNG)" />
         <button class="button secondary tracking-remove" type="button" aria-label="Remove this tracking row">✕</button>
       `;
 
@@ -1390,8 +1390,15 @@
         if (tracking) trackingNumbers.push(tracking);
 
         if (file) {
-          if (file.type && file.type !== "application/pdf") {
-            throw new Error(`${file.name} is not a PDF.`);
+          /*
+            A label off a phone is a photo, and the server has turned those
+            into a PDF all along - imageLabelToPdf, which its own error names.
+            This page was the only thing still insisting on a PDF.
+          */
+          const allowed = ["application/pdf", "image/jpeg", "image/png"];
+
+          if (file.type && !allowed.includes(file.type)) {
+            throw new Error(`${file.name} is not a PDF, JPEG or PNG.`);
           }
 
           labelFiles.push({
