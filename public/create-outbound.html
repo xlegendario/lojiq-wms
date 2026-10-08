@@ -1109,7 +1109,26 @@
               data-field="quantity"
             />
           </td>
-          <td>${item.unitPrice.toFixed(2)}</td>
+          <td>${
+            /*
+              A forward can hold several kinds of stock at once, and a hoodie
+              is not agreed at the same fee as a pair of shoes. The fee the
+              pair came in at is filled in; typing over it charges this
+              forward differently. A sale's unit price is not ours to change
+              here, so it stays as it reads.
+            */
+            outboundMode === "Forwarding"
+              ? `<input
+                   class="input"
+                   type="text"
+                   inputmode="decimal"
+                   value="${item.unitPrice.toFixed(2)}"
+                   data-index="${index}"
+                   data-field="unitPrice"
+                   aria-label="Forwarding fee for this line"
+                 />`
+              : item.unitPrice.toFixed(2)
+          }</td>
           <td>${(item.unitPrice * item.quantity).toFixed(2)}</td>
           <td>
             <button class="delete-btn" type="button" data-delete-index="${index}" aria-label="Delete row">
@@ -1526,12 +1545,34 @@
 
     itemsTableBody.addEventListener("input", (event) => {
       const input = event.target;
-    
+
+      /*
+        The forwarding fee for this line. Not written back into the box while
+        it is being typed - "1" on the way to "12,50" would be corrected under
+        the cursor - so only the totals are redrawn.
+      */
+      if (input.dataset.field === "unitPrice") {
+        const row = Number(input.dataset.index);
+        if (!Number.isInteger(row) || !items[row]) return;
+
+        const typed = Number(String(input.value).replace(",", "."));
+
+        items[row].unitPrice = Number.isFinite(typed) && typed >= 0 ? typed : 0;
+
+        // The Total Fee beside it, by hand: drawing the table again here
+        // would take the cursor out of the box mid-number.
+        const totalCell = input.closest("td")?.nextElementSibling;
+        if (totalCell) totalCell.textContent = (items[row].unitPrice * items[row].quantity).toFixed(2);
+
+        renderSummaryTotals();
+        return;
+      }
+
       if (input.dataset.field !== "quantity") return;
-    
+
       const index = Number(input.dataset.index);
       if (!Number.isInteger(index) || !items[index]) return;
-    
+
       let value = Number(input.value);
     
       if (!Number.isFinite(value) || value < 1) {

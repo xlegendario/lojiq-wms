@@ -4138,6 +4138,35 @@ app.post("/api/submit-outbound", async (req, res) => {
       .filter((id) => String(id).startsWith(PARTNER_PAIR_PREFIX))
       .map((id) => String(id).slice(PARTNER_PAIR_PREFIX.length));
 
+    /*
+      The forwarding fee as it was typed on each line, against the pairs of
+      that line. One forward can hold several kinds of stock, and a hoodie is
+      not agreed at the same fee as a pair of shoes. A line left empty sends
+      nothing, and the pair keeps the fee it came in at.
+    */
+    const partnerPairFees = {};
+
+    for (const item of items) {
+      const typed = asText(item?.unit_forwarding_fee);
+
+      if (!typed) continue;
+
+      const fee = Number(typed.replace(",", "."));
+
+      if (!Number.isFinite(fee)) continue;
+
+      const quantity = Number(item?.quantity);
+      const ids = Array.isArray(item?.inventory_unit_ids) ? item.inventory_unit_ids : [];
+
+      if (!Number.isInteger(quantity) || quantity < 1) continue;
+
+      for (const id of ids.slice(0, quantity)) {
+        if (!String(id).startsWith(PARTNER_PAIR_PREFIX)) continue;
+
+        partnerPairFees[String(id).slice(PARTNER_PAIR_PREFIX.length)] = fee;
+      }
+    }
+
     const airtableUnitIds = linkedInventoryUnitIds.filter(
       (id) => !String(id).startsWith(PARTNER_PAIR_PREFIX)
     );
@@ -4244,6 +4273,7 @@ app.post("/api/submit-outbound", async (req, res) => {
       const data = await callPortal("/api/internal/forwarding/create", {
         seller_record_id: sellerId,
         pair_ids: partnerPairIds,
+        fees: partnerPairFees,
         shipping_costs: shippingCosts,
         labels_needed: shippingLabels,
         tracking_numbers: trackingNumbers,
