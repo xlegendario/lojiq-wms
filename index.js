@@ -5084,6 +5084,40 @@ app.get("/api/sendcloud/parcel", async (req, res) => {
   }
 });
 
+/*
+ * Which other orders would travel in this one's parcel.
+ *
+ * Read-only, and asked before a label exists: the portal needs to know
+ * which embeds to put on hold the moment a consignor presses Request Label,
+ * and the rule for what belongs in one box lives here rather than in two
+ * places that can drift apart.
+ */
+app.get("/api/parcel-siblings", async (req, res) => {
+  try {
+    const recordId = asText(req.query.record_id);
+
+    if (!recordId) return res.status(400).json({ error: "Missing record_id" });
+
+    const orderRecord = await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).find(recordId);
+    const orderFields = orderRecord.fields || {};
+
+    const siblings = await parcelSiblingOrders({ orderRecord, orderFields });
+
+    return res.json({
+      ok: true,
+      order_id: asText(orderFields["Order ID"]) || recordId,
+      siblings: siblings.map((row) => ({
+        record_id: row.id,
+        order_id: asText(row.fields?.["Order ID"]) || row.id
+      }))
+    });
+  } catch (error) {
+    console.error("parcel-siblings failed:", error.message);
+
+    return res.status(500).json({ error: "Failed to read the parcel", details: error.message });
+  }
+});
+
 app.post("/api/request-label", async (req, res) => {
   try {
     const source = asText(req.body?.source);
