@@ -254,6 +254,109 @@ async function getShopifyOrder({ shopDomain, accessToken, orderId }) {
   return data.order;
 }
 
+/*
+ * The store's Shopify order marked as sent, with our tracking on it.
+ *
+ * A store on our contract gets its label from us, so nothing else ever
+ * learns the tracking number: Shopify kept the order open, and the shopper
+ * never had the mail with the link in it. One fulfillment per fulfillment
+ * order, holding every pair that travels in this box, and Shopify mails the
+ * shopper itself.
+ *
+ * Only lines that are still open are touched. A line the store already
+ * fulfilled, or one that was cancelled, is left as it is - and the label
+ * stands either way: a parcel on its way matters more than the mail about it.
+ */
+async function fulfillShopifyOrderWithTracking({
+  shopDomain,
+  accessToken,
+  shopifyOrderId,
+  variantIds,
+  trackingNumber,
+  trackingUrl,
+  carrier
+}) {
+  const base = `https://${shopDomain}/admin/api/2024-01`;
+  const headers = {
+    "X-Shopify-Access-Token": accessToken,
+    "Content-Type": "application/json"
+  };
+
+  const res = await fetch(`${base}/orders/${shopifyOrderId}/fulfillment_orders.json`, { headers });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Shopify fulfillment orders failed: ${res.status} ${text}`);
+  }
+
+  const fulfillmentOrders = (await res.json())?.fulfillment_orders || [];
+
+  // One pair per variant id in the box; two of the same size are two entries.
+  const wanted = variantIds.map((id) => asText(id)).filter(Boolean);
+  const byFulfillmentOrder = new Map();
+  const missing = [];
+
+  for (const variantId of wanted) {
+    let placed = false;
+
+    for (const fo of fulfillmentOrders) {
+      if (!["open", "in_progress"].includes(asText(fo.status))) continue;
+      if (!(fo.supported_actions || []).includes("create_fulfillment")) continue;
+
+      const line = (fo.line_items || []).find((item) => {
+        const taken = byFulfillmentOrder.get(fo.id)?.get(item.id) || 0;
+        return asText(item.variant_id) === variantId && Number(item.fulfillable_quantity) > taken;
+      });
+
+      if (!line) continue;
+
+      const lines = byFulfillmentOrder.get(fo.id) || new Map();
+      lines.set(line.id, (lines.get(line.id) || 0) + 1);
+      byFulfillmentOrder.set(fo.id, lines);
+      placed = true;
+      break;
+    }
+
+    if (!placed) missing.push(variantId);
+  }
+
+  const fulfilled = [];
+
+  for (const [fulfillmentOrderId, lines] of byFulfillmentOrder) {
+    const body = {
+      fulfillment: {
+        notify_customer: true,
+        tracking_info: {
+          number: trackingNumber,
+          company: carrier,
+          ...(trackingUrl ? { url: trackingUrl } : {})
+        },
+        line_items_by_fulfillment_order: [
+          {
+            fulfillment_order_id: fulfillmentOrderId,
+            fulfillment_order_line_items: [...lines].map(([id, quantity]) => ({ id, quantity }))
+          }
+        ]
+      }
+    };
+
+    const created = await fetch(`${base}/fulfillments.json`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body)
+    });
+
+    if (!created.ok) {
+      const text = await created.text().catch(() => "");
+      throw new Error(`Shopify fulfillment failed: ${created.status} ${text}`);
+    }
+
+    fulfilled.push(fulfillmentOrderId);
+  }
+
+  return { fulfilled, missing };
+}
+
 function extractCustomerAddress(shopifyOrder) {
   const addr = shopifyOrder?.shipping_address;
 
@@ -347,6 +450,38 @@ async function pickMarketplaceCarrier(sellerCountryCode) {
   );
 
   return /dpd/i.test(asText(preferredCourier)) ? "DPD" : "UPS";
+}
+
+/*
+ * Courier and Sendcloud method for a parcel from this country to that one.
+ *
+ * DPD where it can collect, UPS everywhere else, and UPS again when DPD
+ * turns out not to reach the shopper: a pair that ships a few euros dearer
+ * beats a pair that does not ship.
+ */
+async function pickCarrierAndMethod({ orderId, fromCountry, toCountry, weightKg, senderAddressId }) {
+  let carrier = await pickMarketplaceCarrier(fromCountry);
+
+  const lookup = () =>
+    findSendcloudShippingMethod({ carrier, toCountry, senderAddressId, weightKg });
+
+  let method = await lookup().catch((error) => {
+    if (carrier === "UPS") throw error;
+
+    console.warn(`${orderId}: no DPD to ${toCountry}, falling back to UPS`);
+
+    carrier = "UPS";
+
+    return null;
+  });
+
+  if (!method) method = await lookup();
+
+  console.log(
+    `${orderId}: from ${fromCountry || "?"} -> ${carrier} "${method.name}" (#${method.id}) to ${toCountry}`
+  );
+
+  return { carrier, method };
 }
 
 /*
@@ -613,7 +748,8 @@ async function createSendcloudLabel({
 
   return {
     labelUrl,
-    trackingNumber
+    trackingNumber,
+    trackingUrl: asText(parcel?.tracking_url)
   };
 }
 
@@ -3307,14 +3443,27 @@ app.post("/api/receive-parcel", async (req, res) => {
         throw new Error(`Customer address is missing a detectable house number for order ${orderId}`);
       }
 
-      const shippingOptionCode = await getOutboundShippingOptionCode(customerAddress.country);
+      /*
+        The pair is on our table, so it leaves from here. Same choice as a
+        Request Label, with the warehouse as the consignor.
+
+        FIXED - this read Outbound Shipping Codes, which only has NL, BE and
+        DE: a shopper anywhere else got no label.
+      */
+      const { carrier, method } = await pickCarrierAndMethod({
+        orderId,
+        fromCountry: "NL",
+        toCountry: customerAddress.country,
+        weightKg: Number(SENDCLOUD_MARKETPLACE_WEIGHT_KG)
+      });
 
       const sendcloud = await createSendcloudLabel({
         customerAddress,
-        shippingOptionCode,
+        shippingOptionCode: method.id,
         orderId,
         storeName,
-        shopifyOrderNumber
+        shopifyOrderNumber,
+        weightKg: SENDCLOUD_MARKETPLACE_WEIGHT_KG
       });
 
       const labelPdfBuffer = await fetchBuffer(sendcloud.labelUrl, {
@@ -3330,6 +3479,7 @@ app.post("/api/receive-parcel", async (req, res) => {
       await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).update(orderRecord.id, {
         "Fulfillment Status": "Requested Label",
         "Tracking Number": sendcloud.trackingNumber,
+        "Shipping Carrier": carrier,
         "Shipping Label": [
           {
             url: uploadedPdfUrl,
@@ -3340,11 +3490,31 @@ app.post("/api/receive-parcel", async (req, res) => {
         "Label Error Message": null
       });
 
+      // Told after the record says Requested Label - see /api/request-label.
+      let shopifyFulfillment = null;
+
+      if ((asText(merchantFields["Shopify Fulfillment Mode"]) || "None") !== "None") {
+        shopifyFulfillment = await fulfillShopifyOrderWithTracking({
+          shopDomain,
+          accessToken,
+          shopifyOrderId,
+          variantIds: [orderFields["Shopify Variant ID"]],
+          trackingNumber: sendcloud.trackingNumber,
+          trackingUrl: sendcloud.trackingUrl,
+          carrier
+        }).catch((error) => {
+          console.error(`${orderId}: label made, Shopify not told:`, error.message);
+          return { error: error.message };
+        });
+      }
+
       return res.status(200).json({
         message: `Label is requested for ${orderId} successfully`,
         exists: false,
         matched_unfulfilled_order: true,
-        order_id: orderId
+        order_id: orderId,
+        carrier,
+        shopify: shopifyFulfillment
       });
     }
 
@@ -5355,8 +5525,6 @@ app.post("/api/request-label", async (req, res) => {
       throw new Error(`Customer address is missing a detectable house number for order ${orderId}`);
     }
 
-    const shippingOptionCode = await getOutboundShippingOptionCode(customerAddress.country);
-
     /*
       A store order can hold two items from one consignor just as a
       marketplace order can, and they travel the same way: one box, one
@@ -5384,12 +5552,51 @@ app.post("/api/request-label", async (req, res) => {
       );
     }
 
+    /*
+      The courier is decided by where the consignor sits, as for a
+      marketplace sale: DPD where it can collect, UPS everywhere else, and
+      UPS again when DPD does not reach the shopper.
+
+      FIXED - this read one shipping option per destination from Outbound
+      Shipping Codes, which knows nothing about the consignor. A consignor in
+      Poland was handed a DPD label he cannot hand in, and a shopper in any
+      country but NL, BE and DE got no label at all: the table has no row
+      for them.
+    */
+    const sellerCountryCode = await getSellerCountryCodeFromOrderFields(orderFields);
+    const storeParcelWeightKg = (Number(SENDCLOUD_MARKETPLACE_WEIGHT_KG) * storeParcel.length).toFixed(2);
+
+    const { carrier, method } = await pickCarrierAndMethod({
+      orderId,
+      fromCountry: sellerCountryCode,
+      toCountry: customerAddress.country,
+      weightKg: Number(storeParcelWeightKg)
+    });
+
+    if (req.body?.dry === true) {
+      return res.status(200).json({
+        ok: true,
+        dry: true,
+        order: orderId,
+        store: storeName,
+        consignorCountry: sellerCountryCode || null,
+        carrier,
+        method: `${method.name} (#${method.id})`,
+        parcel: storeParcelItems,
+        weightKg: storeParcelWeightKg,
+        shipTo: customerAddress.country,
+        shopifyFulfillmentMode: asText(merchantFields["Shopify Fulfillment Mode"]) || "None"
+      });
+    }
+
     const sendcloud = await createSendcloudLabel({
       customerAddress,
-      shippingOptionCode,
+      shippingOptionCode: method.id,
       orderId,
       storeName,
-      shopifyOrderNumber
+      shopifyOrderNumber,
+      weightKg: storeParcelWeightKg,
+      contractId: /^\d+$/.test(asText(req.body?.contract_id)) ? asText(req.body.contract_id) : null
     });
 
     const labelPdfBuffer = await fetchBuffer(sendcloud.labelUrl, {
@@ -5408,6 +5615,7 @@ app.post("/api/request-label", async (req, res) => {
       await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).update(row.recordId, {
         "Fulfillment Status": "Requested Label",
         "Tracking Number": sendcloud.trackingNumber,
+        "Shipping Carrier": carrier,
         "Shipping Label": [
           {
             url: uploadedPdfUrl,
@@ -5433,13 +5641,47 @@ app.post("/api/request-label", async (req, res) => {
       items: storeParcelItems
     });
 
+    /*
+      After the records say Requested Label, never before: the store
+      fulfillment sync reads a closed Shopify line under a record that is
+      still Confirmed as "the store sent it itself" and marks it Store
+      Fulfilled. Requested Label is outside what it watches.
+
+      None means the store keeps its Shopify to itself.
+    */
+    let shopifyFulfillment = null;
+
+    if ((asText(merchantFields["Shopify Fulfillment Mode"]) || "None") !== "None") {
+      shopifyFulfillment = await fulfillShopifyOrderWithTracking({
+        shopDomain,
+        accessToken,
+        shopifyOrderId,
+        variantIds: storeParcel.map((row) => row.fields["Shopify Variant ID"]),
+        trackingNumber: sendcloud.trackingNumber,
+        trackingUrl: sendcloud.trackingUrl,
+        carrier
+      }).catch((error) => {
+        console.error(`${orderId}: label made, Shopify not told:`, error.message);
+        return { error: error.message };
+      });
+
+      if (shopifyFulfillment?.missing?.length) {
+        console.warn(
+          `${orderId}: no open Shopify line for variant ${shopifyFulfillment.missing.join(", ")} - ` +
+            "already fulfilled or cancelled in the store"
+        );
+      }
+    }
+
     return res.status(200).json({
       ok: true,
       message:
         storeParcel.length > 1
           ? `One label for ${storeParcel.length} items: ${storeParcelItems.map((item) => item.orderId).join(", ")}`
           : `Label created for ${orderId}`,
-      parcel: storeParcelItems.map((item) => item.orderId)
+      parcel: storeParcelItems.map((item) => item.orderId),
+      carrier,
+      shopify: shopifyFulfillment
     });
   } catch (error) {
     console.error("request-label failed:", error);
