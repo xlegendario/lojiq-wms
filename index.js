@@ -193,7 +193,33 @@ function splitStreetAndHouseNumber(addressLine1, addressLine2 = "") {
     };
   }
 
-  // 3. Reverse format: "12 Kalverstraat", "15A Dorpsweg"
+  /*
+   * 3. The number and its addition written apart: "Voorsterweg 34 A",
+   *    "P.A. de Genestetstraat 9 B".
+   *
+   *    A Dutch huisnummertoevoeging is written with a space as often as
+   *    without one, and rule 2 cannot see it: that one wants the last word to
+   *    begin with a digit, and here the last word is the letter. Both of the
+   *    addresses above came back as "no detectable house number" on
+   *    12-10-2026 and left a consignor unable to get any label at all.
+   *
+   *    Deliberately narrow. A street name can end in a word after a number -
+   *    "Rue du 8 Mai" - and reading that word as an addition would put a
+   *    parcel on the wrong doorstep. So only what an addition really looks
+   *    like: a single letter, or one of the few words used for it. Anything
+   *    else still falls through to rule 4 and is reported rather than
+   *    guessed at.
+   */
+  match = line1.match(/^(.*\S)\s+(\d+)\s+([a-z]|bis|ter|hs|bs)$/i);
+  if (match) {
+    return {
+      street: asText(match[1]),
+      houseNumber: `${asText(match[2])}${asText(match[3])}`,
+      usedAddress2AsHouseNumber: false
+    };
+  }
+
+  // 4. Reverse format: "12 Kalverstraat", "15A Dorpsweg"
   match = line1.match(/^(\d+[a-zA-Z0-9\-\/]*)\s+(.*\S)$/);
   if (match) {
     return {
@@ -203,7 +229,7 @@ function splitStreetAndHouseNumber(addressLine1, addressLine2 = "") {
     };
   }
 
-  // 4. Nothing reliable found
+  // 5. Nothing reliable found
   return {
     street: line1,
     houseNumber: "",
