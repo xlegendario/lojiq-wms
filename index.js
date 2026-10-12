@@ -5366,6 +5366,173 @@ app.get("/api/parcel-siblings", async (req, res) => {
   }
 });
 
+/*
+ * Turum: a wholesaler in Poland we reserve pairs from through their API.
+ *
+ * They ship on a label of their own, from Poland, so they need the buyer's
+ * address at the moment we reserve - and that address exists here in only
+ * two places: on a bol order, and in the Shopify of a store whose labels we
+ * make on our contract. The portal asks this first; anything else is a sale
+ * Turum may not fill.
+ *
+ * Behind COUNTER_OFFERS_SECRET, because the answer is a shopper's address.
+ */
+function turumCallRefused(req) {
+  const secret = process.env.COUNTER_OFFERS_SECRET;
+
+  return !secret || asText(req.headers["x-kc-secret"]) !== secret;
+}
+
+async function turumOrderContext(recordId) {
+  const orderRecord = await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).find(recordId);
+  const orderFields = orderRecord.fields || {};
+  const marketplace = asText(orderFields["Marketplace"]).toLowerCase();
+
+  if (marketplace) return { orderFields, channel: marketplace, merchantFields: null };
+
+  const clientId = first(orderFields["Client"]);
+  const merchant = clientId
+    ? await airtable(AIRTABLE_MERCHANTS_TABLE).find(clientId).catch(() => null)
+    : null;
+  const merchantFields = merchant?.fields || {};
+
+  return {
+    orderFields,
+    merchantFields,
+    channel: merchantFields["Labels On Contract?"] ? "contract_store" : "store"
+  };
+}
+
+function shopifyAccessFor(merchantFields) {
+  return {
+    shopDomain: asText(merchantFields["Shopify Store URL"])
+      .replace(/^https?:\/\//, "")
+      .replace(/\/$/, ""),
+    accessToken: asText(merchantFields["Shopify Token"])
+  };
+}
+
+app.post("/api/internal/turum/ship-to", async (req, res) => {
+  if (turumCallRefused(req)) return res.status(401).json({ error: "Unauthorized" });
+
+  try {
+    const recordId = asText(req.body?.record_id);
+
+    if (!recordId) return res.status(400).json({ error: "Missing record_id" });
+
+    const { orderFields, merchantFields, channel } = await turumOrderContext(recordId);
+
+    let address = null;
+
+    if (channel === "bol") {
+      address = customerAddressFromOrderFields(orderFields);
+      address.phone = address.phone || SENDCLOUD_MARKETPLACE_FALLBACK_PHONE;
+    } else if (channel === "contract_store") {
+      const { shopDomain, accessToken } = shopifyAccessFor(merchantFields);
+      const shopifyOrderId = asText(orderFields["Shopify Order ID"]);
+
+      if (!shopDomain || !accessToken || !shopifyOrderId) {
+        return res.status(409).json({ error: "No Shopify order to read the address from", channel });
+      }
+
+      const shopifyOrder = await getShopifyOrder({ shopDomain, accessToken, orderId: shopifyOrderId });
+
+      address = extractCustomerAddress(shopifyOrder);
+    } else {
+      return res.status(409).json({ error: "Turum may not fill this sale", channel });
+    }
+
+    if (!address.name || !address.address1 || !address.city || !address.postalCode || !address.country) {
+      return res.status(409).json({ error: "The address is incomplete", channel });
+    }
+
+    return res.json({
+      ok: true,
+      channel,
+      order_id: asText(orderFields["Order ID"]),
+      address: {
+        name: address.name,
+        street: [address.address1, address.houseNumber].filter(Boolean).join(" "),
+        street_2: address.address2 || "",
+        city: address.city,
+        zip_code: address.postalCode,
+        country: address.country.toUpperCase(),
+        phone_number: address.phone || SENDCLOUD_MARKETPLACE_FALLBACK_PHONE,
+        email: address.email || ""
+      }
+    });
+  } catch (err) {
+    console.error("[turum] ship-to failed:", err.message);
+
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/*
+ * Turum's tracking, onto our order.
+ *
+ * Their parcel takes the place of a label we would have made: the tracking
+ * number and URL go on the record the same way, the status goes to Ready to
+ * Ship, and the tracking sync takes it from there - Shipped, the shopper's
+ * mail, and on bol the shipment report. A store on our contract also gets
+ * its Shopify order fulfilled with it, as the label route does.
+ */
+app.post("/api/internal/turum/tracking", async (req, res) => {
+  if (turumCallRefused(req)) return res.status(401).json({ error: "Unauthorized" });
+
+  try {
+    const recordId = asText(req.body?.record_id);
+    const trackingNumber = asText(req.body?.tracking_number);
+    const carrier = asText(req.body?.carrier);
+    const trackingUrl = asText(req.body?.tracking_url);
+
+    if (!recordId || !trackingNumber) {
+      return res.status(400).json({ error: "Missing record_id or tracking_number" });
+    }
+
+    const { orderFields, merchantFields, channel } = await turumOrderContext(recordId);
+
+    await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).update(recordId, {
+      "Fulfillment Status": "Ready to Ship",
+      "Shipping Status": "Pending",
+      "Tracking Number": trackingNumber,
+      "Tracking URL": trackingUrl,
+      "Shipping Carrier": carrier,
+      // There is no label for the bot to post; Turum holds it.
+      "Label Sent To Discord?": true,
+      "Label Error Message": null
+    });
+
+    let shopifyFulfillment = null;
+
+    if (
+      channel === "contract_store" &&
+      (asText(merchantFields["Shopify Fulfillment Mode"]) || "None") !== "None"
+    ) {
+      const { shopDomain, accessToken } = shopifyAccessFor(merchantFields);
+
+      shopifyFulfillment = await fulfillShopifyOrderWithTracking({
+        shopDomain,
+        accessToken,
+        shopifyOrderId: asText(orderFields["Shopify Order ID"]),
+        variantIds: [orderFields["Shopify Variant ID"]],
+        trackingNumber,
+        trackingUrl,
+        carrier
+      }).catch((error) => {
+        console.error(`[turum] ${recordId}: tracking written, Shopify not told:`, error.message);
+        return { error: error.message };
+      });
+    }
+
+    return res.json({ ok: true, channel, shopify: shopifyFulfillment });
+  } catch (err) {
+    console.error("[turum] tracking failed:", err.message);
+
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 app.post("/api/request-label", async (req, res) => {
   try {
     const source = asText(req.body?.source);
