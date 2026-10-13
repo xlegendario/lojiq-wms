@@ -3020,6 +3020,145 @@ app.post("/api/submit-direct-intake", async (req, res) => {
  * For the Lojiq Admin portal, which adds labels to a forward after the fact
  * and has no R2 keys of its own.
  */
+/*
+ * Labels for a partner's own parcels (the Lojiq portal's Partner Labels).
+ *
+ * A partner sometimes ships a parcel himself and asks us for the label: it
+ * goes out from our own sender address, on our contract, and he is charged
+ * for it afterwards. Nothing in Airtable is involved - the portal keeps the
+ * request and the money in Supabase and asks here only for the labels.
+ *
+ * One parcel per box, each with its own label and tracking number. Behind
+ * COUNTER_OFFERS_SECRET, because every label made here is paid by us.
+ *
+ * dry: everything decided (method per box, sender, Sendcloud's quoted
+ * price), nothing made - the admin looks before anything is spent.
+ *
+ * SENDCLOUD_PARTNER_SENDER_ADDRESS_ID names the sender address; left empty,
+ * the account default is used, as for the parcels we send ourselves.
+ */
+const PARTNER_LABEL_CARRIERS = ["UPS", "DPD"];
+
+function partnerLabelAddress(input = {}) {
+  const country = asText(input.country).toUpperCase();
+  const address = {
+    name: asText(input.name),
+    company: asText(input.company),
+    address1: asText(input.street),
+    houseNumber: asText(input.house_number),
+    address2: asText(input.address2),
+    city: asText(input.city),
+    postalCode: asText(input.postal_code),
+    country,
+    email: asText(input.email),
+    phone: asText(input.phone)
+  };
+
+  const missing = [];
+  if (!address.name && !address.company) missing.push("name");
+  if (!address.address1) missing.push("street");
+  if (!address.houseNumber) missing.push("house number");
+  if (!address.postalCode) missing.push("postcode");
+  if (!address.city) missing.push("city");
+  if (!/^[A-Z]{2}$/.test(country)) missing.push("country (two letters)");
+
+  return { address, missing };
+}
+
+app.post("/api/partner-labels/create", async (req, res) => {
+  if (turumCallRefused(req)) return res.status(401).json({ ok: false, error: "Unauthorized" });
+
+  const dry = req.body?.dry === true;
+  const reference = sanitizeFileName(asText(req.body?.reference)) || "LBL";
+  const carrier = asText(req.body?.carrier).toUpperCase();
+  const boxes = Array.isArray(req.body?.boxes) ? req.body.boxes : [];
+  const { address, missing } = partnerLabelAddress(req.body?.address);
+
+  const problems = [...missing.map((field) => `The address has no ${field}.`)];
+  if (!PARTNER_LABEL_CARRIERS.includes(carrier)) problems.push("Choose UPS or DPD.");
+  if (!boxes.length || boxes.length > 20) problems.push("Give between 1 and 20 boxes.");
+  if (boxes.some((box) => !(Number(box?.weight_kg) > 0) || Number(box?.weight_kg) > 70)) problems.push("Every box needs a weight between 0 and 70 kg.");
+  if (problems.length) return res.status(400).json({ ok: false, error: problems.join(" ") });
+
+  const senderAddressId = asText(process.env.SENDCLOUD_PARTNER_SENDER_ADDRESS_ID);
+
+  try {
+    // Method per box: the weight band decides the method, so boxes differ.
+    const plan = [];
+    for (const box of boxes) {
+      const weightKg = Number(box.weight_kg);
+      const method = await findSendcloudShippingMethod({ carrier, toCountry: address.country, senderAddressId, weightKg });
+      const lane = (method.raw?.countries || []).find((c) => asText(c.iso_2).toUpperCase() === address.country);
+      plan.push({ weightKg, method, quotedPrice: lane?.price ?? null });
+    }
+
+    const contractId = senderAddressId
+      ? await pickSendcloudContract(carrier, await sendcloudSenderCountry(senderAddressId))
+      : null;
+
+    if (dry) {
+      return res.status(200).json({
+        ok: true,
+        dry: true,
+        carrier,
+        sender: senderAddressId || "account default",
+        senderAddresses: await listSendcloudSenderAddresses().catch((error) => ({ error: error.message })),
+        boxes: plan.map((p) => ({ weight_kg: p.weightKg, method: `${p.method.name} (#${p.method.id})`, quoted_price: p.quotedPrice })),
+        ship_to: { ...address, phone: address.phone || SENDCLOUD_MARKETPLACE_FALLBACK_PHONE }
+      });
+    }
+
+    /*
+      Box by box. A box that fails stops the rest, and what was made before
+      it is handed back all the same: those labels exist and are paid for,
+      so the portal must keep them.
+    */
+    const made = [];
+    for (let i = 0; i < plan.length; i += 1) {
+      try {
+        const sendcloud = await createSendcloudLabel({
+          customerAddress: address,
+          shippingOptionCode: plan[i].method.id,
+          orderId: `${reference}-${i + 1}`,
+          storeName: "",
+          shopifyOrderNumber: "",
+          senderAddressId,
+          weightKg: plan[i].weightKg,
+          fallbackPhone: SENDCLOUD_MARKETPLACE_FALLBACK_PHONE,
+          contractId
+        });
+
+        const pdf = await fetchBuffer(sendcloud.labelUrl, {
+          Authorization: buildBasicAuthHeader(SENDCLOUD_PUBLIC_KEY, SENDCLOUD_SECRET_KEY)
+        });
+
+        // A name nobody can guess: the label carries the receiver's address.
+        const key = `partner-labels/${reference}-${i + 1}-${globalThis.crypto.randomUUID()}.pdf`;
+        const url = await uploadPdfToR2({ key, pdfBuffer: pdf });
+
+        made.push({
+          box: i + 1,
+          weight_kg: plan[i].weightKg,
+          tracking: sendcloud.trackingNumber,
+          tracking_url: sendcloud.trackingUrl || "",
+          label_url: url,
+          method: plan[i].method.name,
+          quoted_price: plan[i].quotedPrice
+        });
+      } catch (error) {
+        console.error(`partner label ${reference} box ${i + 1} failed:`, error.message);
+        return res.status(made.length ? 207 : 502).json({ ok: false, error: error.message, labels: made });
+      }
+    }
+
+    console.log(`partner label ${reference}: ${made.length} ${carrier} label(s) to ${address.country}`);
+    return res.status(200).json({ ok: true, carrier, labels: made });
+  } catch (error) {
+    console.error(`partner label ${reference} failed:`, error.message);
+    return res.status(502).json({ ok: false, error: error.message });
+  }
+});
+
 app.post("/api/upload-label-file", async (req, res) => {
   try {
     const [stored] = await storeLabelFiles(
