@@ -714,7 +714,10 @@ async function createSendcloudLabel({
     }
   };
 
-  const res = await fetch(SENDCLOUD_PARCELS_URL, {
+  // verbose-carrier: when the carrier refuses the announcement, Sendcloud
+  // answers 400 with the carrier's own reason instead of a parcel that only
+  // says "Announcement failed" (a partner label to Germany, 14-10-2026).
+  const res = await fetch(`${SENDCLOUD_PARCELS_URL}?errors=verbose-carrier`, {
     method: "POST",
     headers: {
       Authorization: buildBasicAuthHeader(SENDCLOUD_PUBLIC_KEY, SENDCLOUD_SECRET_KEY),
@@ -769,6 +772,8 @@ async function createSendcloudLabel({
     "";
 
   if (!labelUrl) {
+    const state = asText(parcel?.status?.message);
+    if (state) throw new Error(`Sendcloud parcel ${parcel?.id}: ${state} (${asText(parcel?.carrier?.code)}, ${asText(parcel?.shipment?.name)}). The reason is on the parcel in the Sendcloud panel.`);
     throw new Error(`Sendcloud response missing label URL: ${JSON.stringify(body)}`);
   }
 
