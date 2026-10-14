@@ -3120,9 +3120,12 @@ app.post("/api/partner-labels/create", async (req, res) => {
       plan.push({ weightKg, size: partnerBoxSize(box), method, quotedPrice: lane?.price ?? null });
     }
 
-    const contractId = senderAddressId
-      ? await pickSendcloudContract(carrier, await sendcloudSenderCountry(senderAddressId))
-      : null;
+    // UPS goes on 352123, the contract of this sender's brand: the first
+    // label (14-10-2026) worked on it, while 352122 with the account default
+    // was refused. Two are active for NL, so "the first one" is not safe.
+    const pinned = carrier === "UPS" ? asText(process.env.SENDCLOUD_PARTNER_UPS_CONTRACT_ID) || "352123" : "";
+    const contractId = pinned
+      || (senderAddressId ? await pickSendcloudContract(carrier, await sendcloudSenderCountry(senderAddressId)) : null);
 
     if (dry) {
       return res.status(200).json({
