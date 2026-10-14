@@ -3043,8 +3043,8 @@ app.post("/api/submit-direct-intake", async (req, res) => {
  * dry: everything decided (method per box, sender, Sendcloud's quoted
  * price), nothing made - the admin looks before anything is spent.
  *
- * SENDCLOUD_PARTNER_SENDER_ADDRESS_ID names the sender address; left empty,
- * the account default is used, as for the parcels we send ourselves.
+ * The sender is Lojiq Plug & Play Fulfillment (432314);
+ * SENDCLOUD_PARTNER_SENDER_ADDRESS_ID overrides it.
  */
 const PARTNER_LABEL_CARRIERS = ["UPS", "DPD"];
 
@@ -3099,7 +3099,9 @@ app.post("/api/partner-labels/create", async (req, res) => {
   if (boxes.some((box) => partnerBoxSize(box) === false)) problems.push("A box size needs length, width and height, each between 1 and 300 cm.");
   if (problems.length) return res.status(400).json({ ok: false, error: problems.join(" ") });
 
-  const senderAddressId = asText(process.env.SENDCLOUD_PARTNER_SENDER_ADDRESS_ID);
+  // Lojiq Plug & Play Fulfillment (Dario, 14-10-2026): the account default
+  // sender made UPS refuse the announcement. The env still overrides it.
+  const senderAddressId = asText(process.env.SENDCLOUD_PARTNER_SENDER_ADDRESS_ID) || "432314";
 
   // UPS refuses a parcel without an e-mail. The receiver's when he gave one,
   // else ours - as with the phone - so a carrier message reaches someone.
@@ -3128,6 +3130,7 @@ app.post("/api/partner-labels/create", async (req, res) => {
         dry: true,
         carrier,
         sender: senderAddressId || "account default",
+        contract: contractId,
         senderAddresses: await listSendcloudSenderAddresses().catch((error) => ({ error: error.message })),
         boxes: plan.map((p) => ({ weight_kg: p.weightKg, size_cm: p.size, method: `${p.method.name} (#${p.method.id})`, quoted_price: p.quotedPrice })),
         ship_to: { ...address, phone: address.phone || SENDCLOUD_MARKETPLACE_FALLBACK_PHONE }
