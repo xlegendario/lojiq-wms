@@ -676,7 +676,10 @@ async function createSendcloudLabel({
   senderAddressId = "",
   weightKg = null,
   fallbackPhone = "",
-  contractId = null
+  contractId = null,
+  // { length, width, height } in cm, all three or none: Sendcloud and the
+  // carrier work out the volumetric weight from them.
+  dimensionsCm = null
 }) {
   const payload = {
     parcel: {
@@ -702,6 +705,7 @@ async function createSendcloudLabel({
       // own rates instead of ours while our UPS contract is blocked.
       ...(contractId ? { contract: Number(contractId) } : {}),
       weight: weightKg ? String(weightKg) : "0.5",
+      ...(dimensionsCm ? { length: String(dimensionsCm.length), width: String(dimensionsCm.width), height: String(dimensionsCm.height) } : {}),
       order_number: buildSendcloudOrderNumber(
         orderId,
         storeName,
@@ -3039,6 +3043,15 @@ app.post("/api/submit-direct-intake", async (req, res) => {
  */
 const PARTNER_LABEL_CARRIERS = ["UPS", "DPD"];
 
+// A box's size in cm: null when not given, false when only half given.
+function partnerBoxSize(box = {}) {
+  const parts = [box.length_cm, box.width_cm, box.height_cm];
+  if (parts.every((v) => v === undefined || v === null || v === "")) return null;
+  const [length, width, height] = parts.map(Number);
+  if (![length, width, height].every((v) => v >= 1 && v <= 300)) return false;
+  return { length, width, height };
+}
+
 function partnerLabelAddress(input = {}) {
   const country = asText(input.country).toUpperCase();
   const address = {
@@ -3078,6 +3091,7 @@ app.post("/api/partner-labels/create", async (req, res) => {
   if (!PARTNER_LABEL_CARRIERS.includes(carrier)) problems.push("Choose UPS or DPD.");
   if (!boxes.length || boxes.length > 20) problems.push("Give between 1 and 20 boxes.");
   if (boxes.some((box) => !(Number(box?.weight_kg) > 0) || Number(box?.weight_kg) > 70)) problems.push("Every box needs a weight between 0 and 70 kg.");
+  if (boxes.some((box) => partnerBoxSize(box) === false)) problems.push("A box size needs length, width and height, each between 1 and 300 cm.");
   if (problems.length) return res.status(400).json({ ok: false, error: problems.join(" ") });
 
   const senderAddressId = asText(process.env.SENDCLOUD_PARTNER_SENDER_ADDRESS_ID);
@@ -3089,7 +3103,7 @@ app.post("/api/partner-labels/create", async (req, res) => {
       const weightKg = Number(box.weight_kg);
       const method = await findSendcloudShippingMethod({ carrier, toCountry: address.country, senderAddressId, weightKg });
       const lane = (method.raw?.countries || []).find((c) => asText(c.iso_2).toUpperCase() === address.country);
-      plan.push({ weightKg, method, quotedPrice: lane?.price ?? null });
+      plan.push({ weightKg, size: partnerBoxSize(box), method, quotedPrice: lane?.price ?? null });
     }
 
     const contractId = senderAddressId
@@ -3103,7 +3117,7 @@ app.post("/api/partner-labels/create", async (req, res) => {
         carrier,
         sender: senderAddressId || "account default",
         senderAddresses: await listSendcloudSenderAddresses().catch((error) => ({ error: error.message })),
-        boxes: plan.map((p) => ({ weight_kg: p.weightKg, method: `${p.method.name} (#${p.method.id})`, quoted_price: p.quotedPrice })),
+        boxes: plan.map((p) => ({ weight_kg: p.weightKg, size_cm: p.size, method: `${p.method.name} (#${p.method.id})`, quoted_price: p.quotedPrice })),
         ship_to: { ...address, phone: address.phone || SENDCLOUD_MARKETPLACE_FALLBACK_PHONE }
       });
     }
@@ -3125,7 +3139,8 @@ app.post("/api/partner-labels/create", async (req, res) => {
           senderAddressId,
           weightKg: plan[i].weightKg,
           fallbackPhone: SENDCLOUD_MARKETPLACE_FALLBACK_PHONE,
-          contractId
+          contractId,
+          dimensionsCm: plan[i].size
         });
 
         const pdf = await fetchBuffer(sendcloud.labelUrl, {
