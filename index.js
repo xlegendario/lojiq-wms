@@ -1204,7 +1204,8 @@ const MANUAL_STOCK_SELLER_CODES = [
   "SE-00309",
   "SE-00537",
   "SE-00781",
-  "SE-00455"
+  "SE-00455",
+  "SE-00467"
 ];
 
 function parseTrackingNumbers(value) {
