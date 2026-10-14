@@ -3096,6 +3096,13 @@ app.post("/api/partner-labels/create", async (req, res) => {
 
   const senderAddressId = asText(process.env.SENDCLOUD_PARTNER_SENDER_ADDRESS_ID);
 
+  // UPS refuses a parcel without an e-mail. The receiver's when he gave one,
+  // else ours - as with the phone - so a carrier message reaches someone.
+  if (!address.email) address.email = asText(process.env.SENDCLOUD_PARTNER_FALLBACK_EMAIL) || asText(WAREHOUSE_EMAIL);
+  if (!address.email && carrier === "UPS") {
+    return res.status(400).json({ ok: false, error: "UPS needs an e-mail for this address. Fill one in, or set SENDCLOUD_PARTNER_FALLBACK_EMAIL on the WMS." });
+  }
+
   try {
     // Method per box: the weight band decides the method, so boxes differ.
     const plan = [];
