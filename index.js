@@ -1228,7 +1228,7 @@ function isWarehouseItemFast(inventoryRecord, sellerCodeById) {
   }
 
   if (itemId.startsWith("OUT-")) {
-    const allowedSellerCodes = ["SE-00537", "SE-00309", "SE-00781", "SE-00455"];
+    const allowedSellerCodes = ["SE-00537", "SE-00309", "SE-00781", "SE-00455", "SE-00467"];
 
     const sellerRecordIds = Array.isArray(inventoryRecord.fields["Seller ID"])
       ? inventoryRecord.fields["Seller ID"]
@@ -1264,7 +1264,7 @@ async function isWarehouseItem(inventoryRecord) {
 
   // Conditional OUT-
   if (itemId.startsWith("OUT-")) {
-    const allowedSellerCodes = ["SE-00537", "SE-00309", "SE-00781", "SE-00455"];
+    const allowedSellerCodes = ["SE-00537", "SE-00309", "SE-00781", "SE-00455", "SE-00467"];
 
     for (const sellerRecordId of sellerRecordIds) {
       const sellerCode = await getSellerCodeFromRecordId(sellerRecordId);
@@ -1562,7 +1562,8 @@ async function getSellerCountryCodeFromOrderFields(orderFields) {
     "SE-00309",
     "SE-00537",
     "SE-00781",
-    "SE-00455"
+    "SE-00455",
+    "SE-00467"
   ];
 
   const linkedSellerValues = Array.isArray(orderFields["Linked Seller ID"])
