@@ -1246,6 +1246,21 @@ function isWarehouseItemFast(inventoryRecord, sellerCodeById) {
   return false;
 }
 
+/*
+ * An order whose pair was sent to us first and has been scanned in.
+ *
+ * Who holds stock here is mostly a property of the seller, which is what the
+ * lists above encode. But a consignor can also send one particular pair to
+ * the warehouse - a Woovin order they cannot post themselves on DPD - and ship
+ * the next one straight to the buyer. That is decided per order, so it is
+ * read off the order: Receive Parcels sets Inbound Status to Received when
+ * the inbound label is scanned, and from then on the pair is on our table
+ * whoever's shelf it came from.
+ */
+function arrivedAtWarehouse(orderRecord) {
+  return asText(orderRecord?.fields?.["Inbound Status"]) === "Received";
+}
+
 async function isWarehouseItem(inventoryRecord) {
   const itemId = asText(inventoryRecord?.fields["Item ID"]).toUpperCase();
 
@@ -1302,7 +1317,8 @@ async function getPackShipOutboundOptions() {
         "Shipping Status",
         "Linked Inventory Unit",
         "Shipping Label",
-        "Tracking Number"
+        "Tracking Number",
+        "Inbound Status"
       ],
       filterByFormula: `AND(
         {Fulfillment Status} = 'Ready to Ship',
@@ -1455,7 +1471,7 @@ async function getPackShipOutboundOptions() {
       const inventoryRecord = inventoryUnitsById.get(id);
       if (!inventoryRecord) continue;
   
-      if (isWarehouseItemFast(inventoryRecord, sellerCodeById)) {
+      if (arrivedAtWarehouse(record) || isWarehouseItemFast(inventoryRecord, sellerCodeById)) {
         warehouseInventoryUnitIds.push(id);
       }
     }
@@ -2374,7 +2390,8 @@ async function getPackShipOutboundDetails(outboundId, sourceTable) {
           "Fulfillment Status",
           "Shipping Status",
           "Linked Inventory Unit",
-          "Shipping Label"
+          "Shipping Label",
+          "Inbound Status"
         ],
         filterByFormula: `AND(
           ${groupFilter},
@@ -2403,10 +2420,16 @@ async function getPackShipOutboundDetails(outboundId, sourceTable) {
       linkedInventoryUnitIds.map((id) => airtable(AIRTABLE_INVENTORY_UNITS_TABLE).find(id))
     );
 
+    const arrivedUnitIds = new Set(
+      records
+        .filter(arrivedAtWarehouse)
+        .flatMap((record) => record.fields["Linked Inventory Unit"] || [])
+    );
+
     const filteredItems = [];
 
     for (const itemRecord of inventoryUnitRecords) {
-      if (await isWarehouseItem(itemRecord)) {
+      if (arrivedUnitIds.has(itemRecord.id) || await isWarehouseItem(itemRecord)) {
         filteredItems.push(itemRecord);
       }
     }
@@ -3999,7 +4022,8 @@ app.post("/api/submit-pack-ship", async (req, res) => {
             "Store Name",
             "Fulfillment Status",
             "Shipping Status",
-            "Linked Inventory Unit"
+            "Linked Inventory Unit",
+            "Inbound Status"
           ],
           filterByFormula: `AND(
             ${groupFilter},
@@ -4025,9 +4049,9 @@ app.post("/api/submit-pack-ship", async (req, res) => {
           linkedIds.map((id) => airtable(AIRTABLE_INVENTORY_UNITS_TABLE).find(id))
         );
     
-        let hasWarehouseItem = false;
+        let hasWarehouseItem = arrivedAtWarehouse(record);
     
-        for (const itemRecord of inventoryUnitRecords) {
+        for (const itemRecord of hasWarehouseItem ? [] : inventoryUnitRecords) {
           if (await isWarehouseItem(itemRecord)) {
             hasWarehouseItem = true;
             break;
