@@ -6094,6 +6094,24 @@ app.post("/send-label-to-channel", async (req, res) => {
     const record = await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).find(recordId);
     const fields = record.fields || {};
 
+    /*
+     * Nobody to send it to: the label is for us.
+     *
+     * A pair that was sent to the warehouse first gets the marketplace's
+     * own label the moment it is scanned in, and that lands on this order
+     * like any other label. Posting it to the consignor told them to ship a
+     * pair they had already handed over - ORD-028065 (15-10-2026), where
+     * SE-00930 got the Woovin label after the pair was on our table. We
+     * pack it in Pack & Ship, so it is marked sent and goes nowhere.
+     */
+    if (arrivedAtWarehouse(record)) {
+      await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).update(recordId, {
+        "Label Sent To Discord?": true
+      });
+
+      return res.json({ ok: true, skipped: "pair arrived at the warehouse" });
+    }
+
     const claimedChannelId = asText(fields["Claimed Channel ID"]);
     const wtbChannelId = asText(fields["WTB Created Channel ID"]);
     
@@ -6129,6 +6147,17 @@ app.post("/send-label-to-channel", async (req, res) => {
       markLabelOk = false;
       
       if (!targetChannelId && !sellerDiscordId) {
+        const sellerCode = asText(sellerRecord.fields["Seller ID"]).trim().toUpperCase();
+
+        // StockX, GOAT: stock that lives here, so nobody to post it to.
+        if (MANUAL_STOCK_SELLER_CODES.includes(sellerCode)) {
+          await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).update(recordId, {
+            "Label Sent To Discord?": true
+          });
+
+          return res.json({ ok: true, skipped: `${sellerCode} ships from the warehouse` });
+        }
+
         throw new Error("No channel ID found and seller has no Labels Channel ID or Discord ID");
       }
     }
