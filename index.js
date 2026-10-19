@@ -1205,7 +1205,11 @@ const MANUAL_STOCK_SELLER_CODES = [
   "SE-00537",
   "SE-00781",
   "SE-00455",
-  "SE-00467"
+  "SE-00467",
+  // Ships from the Italian warehouse, not from here: deliberately not in
+  // the warehouse lists below, so the label request reads the seller's own
+  // country (IT) and Label Request Routing asks for UPS.
+  "SE-00469"
 ];
 
 function parseTrackingNumbers(value) {
