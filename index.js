@@ -1212,6 +1212,17 @@ const MANUAL_STOCK_SELLER_CODES = [
   "SE-00469"
 ];
 
+/*
+ * Pack & Ship orders that someone else packs.
+ *
+ * SE-00469 ships from the Italian warehouse, which uses this same WMS. Their
+ * orders belong in the list, but nobody in Huizen should pick one up, so the
+ * name of whoever packs it goes after the label.
+ */
+const PACK_SHIP_PACKER_BY_SELLER = {
+  "SE-00469": "Emanuele"
+};
+
 function parseTrackingNumbers(value) {
   return asText(value)
     .split(",")
@@ -1232,7 +1243,7 @@ function isWarehouseItemFast(inventoryRecord, sellerCodeById) {
   }
 
   if (itemId.startsWith("OUT-")) {
-    const allowedSellerCodes = ["SE-00537", "SE-00309", "SE-00781", "SE-00455", "SE-00467"];
+    const allowedSellerCodes = ["SE-00537", "SE-00309", "SE-00781", "SE-00455", "SE-00467", "SE-00469", "SE-00281"];
 
     const sellerRecordIds = Array.isArray(inventoryRecord.fields["Seller ID"])
       ? inventoryRecord.fields["Seller ID"]
@@ -1283,7 +1294,7 @@ async function isWarehouseItem(inventoryRecord) {
 
   // Conditional OUT-
   if (itemId.startsWith("OUT-")) {
-    const allowedSellerCodes = ["SE-00537", "SE-00309", "SE-00781", "SE-00455", "SE-00467"];
+    const allowedSellerCodes = ["SE-00537", "SE-00309", "SE-00781", "SE-00455", "SE-00467", "SE-00469", "SE-00281"];
 
     for (const sellerRecordId of sellerRecordIds) {
       const sellerCode = await getSellerCodeFromRecordId(sellerRecordId);
@@ -1470,6 +1481,7 @@ async function getPackShipOutboundOptions() {
       : [];
   
     const warehouseInventoryUnitIds = [];
+    const packers = new Set();
   
     for (const id of linkedInventoryUnitIds) {
       const inventoryRecord = inventoryUnitsById.get(id);
@@ -1477,6 +1489,11 @@ async function getPackShipOutboundOptions() {
   
       if (arrivedAtWarehouse(record) || isWarehouseItemFast(inventoryRecord, sellerCodeById)) {
         warehouseInventoryUnitIds.push(id);
+
+        for (const sellerRecordId of inventoryRecord.fields["Seller ID"] || []) {
+          const packer = PACK_SHIP_PACKER_BY_SELLER[sellerCodeById.get(sellerRecordId)];
+          if (packer) packers.add(packer);
+        }
       }
     }
   
@@ -1494,9 +1511,12 @@ async function getPackShipOutboundOptions() {
         shipping_status: asText(record.fields["Shipping Status"]) || "Pending",
         tracking_numbers_count: 1,
         store_name: storeName || "Unknown Store",
-        order_numbers: new Set()
+        order_numbers: new Set(),
+        packers: new Set()
       });
     }
+
+    packers.forEach((packer) => groupedOrders.get(groupKey).packers.add(packer));
   
     if (shopifyOrderNumber) {
       groupedOrders.get(groupKey).order_numbers.add(shopifyOrderNumber);
@@ -1512,7 +1532,8 @@ async function getPackShipOutboundOptions() {
     return {
       id: group.id,
       source_table: group.source_table,
-      label: `${group.store_name} / ${orderNumbersText}`,
+      label: `${group.store_name} / ${orderNumbersText}` +
+        (group.packers.size ? ` (${Array.from(group.packers).join(", ")})` : ""),
       shipping_status: group.shipping_status,
       tracking_numbers_count: group.tracking_numbers_count
     };
