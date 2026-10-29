@@ -1828,7 +1828,7 @@
           body: JSON.stringify({ tracking_number: trackingNumber, type: "Forwarding", seller_record_id: sellerRecordId, box: true, items: [] })
         });
         const data = await response.json().catch(() => ({}));
-        if (!response.ok || !data.ok) throw new Error((data.errors || []).join(" · ") || data.details || "Submit failed");
+        if (!response.ok || !data.ok) throw new Error([...(data.errors || []), data.details].filter(Boolean).join(" · ") || "Submit failed");
 
         showToast(`Closed box ${data.tracking_number} on the shelf of ${data.seller_id}.`, "success", "Success");
         clearParcelAfterSubmit();

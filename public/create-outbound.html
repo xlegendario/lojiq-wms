@@ -1253,7 +1253,7 @@ Add it as a closed box for ${seller} (sent on unopened, fee per box)?`)) return 
       const data = await response.json().catch(() => ({}));
 
       if (!response.ok || !data.ok) {
-        showToast((data.errors || []).join(" · ") || data.details || "The closed box could not be added.", "error", "Closed box");
+        showToast([...(data.errors || []), data.details].filter(Boolean).join(" · ") || "The closed box could not be added.", "error", "Closed box");
         return true;
       }
 

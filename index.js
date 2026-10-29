@@ -2858,7 +2858,9 @@ function sendPortalAnswer(res, data, fallbackError) {
 
   return res.status(data?.httpStatus && data.httpStatus >= 400 ? data.httpStatus : 500).json({
     ok: false,
-    errors: Array.isArray(data?.errors) && data.errors.length ? data.errors : [fallbackError]
+    errors: Array.isArray(data?.errors) && data.errors.length ? data.errors : [fallbackError],
+    // The portal's own reason behind a bare "Intake failed", for the screen.
+    details: data?.details || undefined
   });
 }
 
