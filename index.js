@@ -2894,6 +2894,8 @@ app.post("/api/submit-partner-intake", async (req, res) => {
         seller_record_id: sellerRecordId,
         mode,
         tracking_number: trackingNumber,
+        // A closed box: the parcel goes on unopened, one row for the box.
+        box: req.body?.box === true,
         append: Boolean(req.body?.append),
         items: items.map((item) => ({
           barcode: asText(item.gtin),

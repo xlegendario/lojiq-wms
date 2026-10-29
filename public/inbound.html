@@ -684,6 +684,7 @@
 
         <div class="actions">
           <button class="button secondary" id="focusScannerBtn">Refocus</button>
+          <button class="button secondary" id="closedBoxBtn" hidden title="The parcel is not opened: it goes on as it is, with a new label, at the partner's fee per box.">Closed box</button>
           <button class="button" id="submitBtn">Submit</button>
         </div>
       </div>
@@ -781,6 +782,7 @@
     const resetBtn = document.getElementById("resetBtn");
     const focusScannerBtn = document.getElementById("focusScannerBtn");
     const submitBtn = document.getElementById("submitBtn");
+    const closedBoxBtn = document.getElementById("closedBoxBtn");
     const manualSkuInput = document.getElementById("manualSkuInput");
     const manualSizeInput = document.getElementById("manualSizeInput");
     const manualAddBtn = document.getElementById("manualAddBtn");
@@ -871,6 +873,8 @@
        * agreed differently is simply typed over.
        */
       document.getElementById("feeHeader").hidden = !PARTNER_TYPES.includes(typeSelect.value);
+      // A closed box is only ever forwarded.
+      closedBoxBtn.hidden = typeSelect.value !== "Forwarding";
 
       const type = typeSelect.value;
 
@@ -1795,6 +1799,45 @@
     resetBtn.addEventListener("click", resetParcel);
     focusScannerBtn.addEventListener("click", focusScanner);
     submitBtn.addEventListener("click", submitParcel);
+
+    /*
+     * A closed box (28-10-2026): the partner's parcel stays shut and goes on
+     * with a new label. Nothing is scanned out of it; the box itself is one
+     * row on his shelf, found again later by this tracking number.
+     */
+    closedBoxBtn.addEventListener("click", async () => {
+      const [kind, sellerRecordId] = String(partySelect.value).split(":");
+
+      if (!parcelStarted || !trackingNumber) {
+        showToast("Scan the tracking number of the box first.", "warning", "Warning");
+        trackingInput.focus();
+        return;
+      }
+      if (kind !== "partner" || !sellerRecordId) {
+        showToast("Pick the partner this box belongs to.", "warning", "Warning");
+        partySelect.focus();
+        return;
+      }
+      if (items.length && !window.confirm("There are scanned pairs on this parcel. A closed box ignores them. Take it in as a closed box anyway?")) return;
+
+      closedBoxBtn.disabled = true;
+      try {
+        const response = await fetch("/api/submit-partner-intake", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tracking_number: trackingNumber, type: "Forwarding", seller_record_id: sellerRecordId, box: true, items: [] })
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.ok) throw new Error((data.errors || []).join(" · ") || data.details || "Submit failed");
+
+        showToast(`Closed box ${data.tracking_number} on the shelf of ${data.seller_id}.`, "success", "Success");
+        clearParcelAfterSubmit();
+      } catch (error) {
+        showToast(`Closed box: ${error.message}`, "error", "Error");
+      } finally {
+        closedBoxBtn.disabled = false;
+      }
+    });
     manualAddBtn.addEventListener("click", handleManualAdd);
 
     qcCondition.addEventListener("change", () => {

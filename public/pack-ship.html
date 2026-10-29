@@ -618,7 +618,11 @@
       const cleanGtin = gtin.trim();
       if (!cleanGtin) return;
 
-      const itemIndex = unpacked.findIndex((item) => item.gtin === cleanGtin);
+      // A closed box is its original tracking number; a carrier barcode may
+      // carry more around it (DPD), so for a box the number inside is enough.
+      const scannedUpper = cleanGtin.replace(/\s+/g, "").toUpperCase();
+      const itemIndex = unpacked.findIndex((item) => item.gtin === cleanGtin ||
+        (item.sku === "BOX" && item.gtin && scannedUpper.includes(String(item.gtin).toUpperCase())));
       if (itemIndex === -1) {
         showToast("This item is not available to pack or is already packed.", "warning", "Warning");
         return;
