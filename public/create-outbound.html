@@ -1213,6 +1213,9 @@
       }
 
       if (!data.found) {
+        // A forward: a parcel that was never scanned in can go on as a closed box.
+        if (outboundMode === "Forwarding" && data.reason !== "no_available_items" && await offerClosedBox(gtin)) return;
+
         if (data.reason === "unknown_gtin") {
           showToast("Product GTIN unknown in Inventory.", "warning", "Warning");
         } else if (data.reason === "no_available_items") {
@@ -1228,6 +1231,35 @@
       }
 
       await addFromLookup(data);
+    }
+
+    /*
+     * A closed box straight from Create Outbound (29-10-2026): the scan is a
+     * parcel's tracking number that was not taken in at Inbound. Asked once,
+     * it goes on the partner's shelf as a closed box (his Box Forwarding Fee)
+     * and is added here, so a box that leaves the same day needs no intake.
+     */
+    async function offerClosedBox(scanned) {
+      const seller = sellerSelect.options[sellerSelect.selectedIndex]?.text || "this partner";
+      if (!window.confirm(`${scanned} is not on the shelf.
+
+Add it as a closed box for ${seller} (sent on unopened, fee per box)?`)) return false;
+
+      const response = await fetch("/api/submit-partner-intake", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tracking_number: scanned, type: "Forwarding", seller_record_id: sellerSelect.value, box: true, items: [] })
+      });
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok || !data.ok) {
+        showToast((data.errors || []).join(" · ") || data.details || "The closed box could not be added.", "error", "Closed box");
+        return true;
+      }
+
+      showToast(`Closed box ${data.tracking_number} taken in.`, "success", "Closed box");
+      await lookupByGTIN(data.tracking_number);
+      return true;
     }
 
     async function searchBySkuSize() {
