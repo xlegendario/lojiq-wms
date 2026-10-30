@@ -4317,7 +4317,9 @@ app.post("/api/outbound-lookup-gtin", async (req, res) => {
         })
         .firstPage();
 
-      if (anyMatch.length > 0) {
+      // A barcode the catalogue knows is a product, never a closed box: the
+      // page takes an unknown scan in a forward as a box without asking.
+      if (anyMatch.length > 0 || partnerForGtin?.sku) {
         return res.status(200).json({
           found: false,
           reason: "no_available_items"
