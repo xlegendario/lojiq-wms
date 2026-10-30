@@ -1235,16 +1235,12 @@
 
     /*
      * A closed box straight from Create Outbound (29-10-2026): the scan is a
-     * parcel's tracking number that was not taken in at Inbound. Asked once,
-     * it goes on the partner's shelf as a closed box (his Box Forwarding Fee)
-     * and is added here, so a box that leaves the same day needs no intake.
+     * parcel's tracking number that was not taken in at Inbound. It goes on
+     * the partner's shelf as a closed box (his Box Forwarding Fee) and is
+     * added here, without a question: Dario scans at the parcels, not at the
+     * screen (30-10-2026). The line says it was taken in just now.
      */
     async function offerClosedBox(scanned) {
-      const seller = sellerSelect.options[sellerSelect.selectedIndex]?.text || "this partner";
-      if (!window.confirm(`${scanned} is not on the shelf.
-
-Add it as a closed box for ${seller} (sent on unopened, fee per box)?`)) return false;
-
       const response = await fetch("/api/submit-partner-intake", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1259,6 +1255,12 @@ Add it as a closed box for ${seller} (sent on unopened, fee per box)?`)) return 
 
       showToast(`Closed box ${data.tracking_number} taken in.`, "success", "Closed box");
       await lookupByGTIN(data.tracking_number);
+
+      const line = items.find((item) => item.sku === "BOX" && String(item.size).toUpperCase() === String(data.tracking_number).toUpperCase());
+      if (line) {
+        line.source = "New closed box - was not scanned in";
+        renderTable();
+      }
       return true;
     }
 
