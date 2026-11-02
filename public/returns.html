@@ -248,7 +248,7 @@
       message("", "");
       try {
         const data = await post("/api/returns/open", {});
-        state.list = (data.returns || []).filter((r) => ["expected", "received"].includes(r.status)).map((r) => ({ ...r, fit: "" }));
+        state.list = (data.returns || []).filter((r) => ["to_decide", "expected", "received"].includes(r.status)).map((r) => ({ ...r, fit: "" }));
         state.all = true;
         $("pickTitle").textContent = `${state.list.length} expected return${state.list.length === 1 ? "" : "s"}`;
         $("pickSearch").hidden = false;
@@ -265,13 +265,14 @@
 
     function drawPick(others) {
       const term = $("pickSearch").hidden ? "" : $("pickSearch").value.trim().toLowerCase();
-      const list = state.list.filter((r) => !term || [r.order_id, r.marketplace_order_id, r.item_id, r.sku, r.size, r.seller_id, r.seller_name, r.store_name, r.tracking_code, `ret-${r.return_number}`].join(" ").toLowerCase().includes(term));
+      const list = state.list.filter((r) => !term || [r.order_id, r.shopify_order_number, r.marketplace_order_id, r.item_id, r.sku, r.size, r.seller_id, r.seller_name, r.store_name, r.tracking_code, `ret-${r.return_number}`].join(" ").toLowerCase().includes(term));
 
       $("pickList").innerHTML = `<div class="list">${list.map((r) => `
         <button class="item" type="button" data-id="${esc(r.id)}">
           ${r.image_url ? `<img src="${esc(r.image_url)}" alt="" onerror="this.style.visibility='hidden'">` : '<span class="noimg"></span>'}
           <span>
-            <strong>${esc(r.sku)} · ${esc(r.size)}</strong>${r.fit === "sku" ? '<span class="tag warn">other size</span>' : ""}<br>
+            <strong>${esc(r.sku)} · ${esc(r.size)}</strong>${r.fit === "sku" ? '<span class="tag warn">other size</span>' : ""}${r.status === "to_decide" ? '<span class="tag warn">cancelled before shipping?</span>' : ""}<br>
+            ${r.shopify_order_number ? `<span style="color:var(--text)">Order ${esc(r.shopify_order_number)}</span><br>` : ""}
             <span class="muted">${esc(r.product_name || "")}</span><br>
             <span class="muted">RET-${esc(r.return_number)} · ${esc(SOURCE[r.source] || r.source)} · ${esc(r.order_id || "")}${r.item_id ? ` · ${esc(r.item_id)}` : ""}${r.seller_id ? ` · ${esc(r.seller_id)}` : ""}</span>
             ${r.reason ? `<br><span class="muted">Reason: ${esc(r.reason)}</span>` : ""}
@@ -297,6 +298,7 @@
       $("judgeInfo").innerHTML = `
         ${r.image_url ? `<img src="${esc(r.image_url)}" alt="" onerror="this.style.visibility='hidden'" style="width:120px;height:120px;object-fit:contain;background:#fff;border-radius:12px;float:right;margin-left:12px">` : ""}
         <p style="margin:0 0 6px"><strong style="color:var(--text)">${esc(r.product_name || "")}</strong></p>
+        ${r.shopify_order_number ? `<p style="margin:0 0 6px;font-size:18px;color:var(--text)">Order <strong>${esc(r.shopify_order_number)}</strong></p>` : ""}
         <p style="margin:0 0 6px">${esc(SOURCE[r.source] || r.source)} · ${esc(r.order_id || "")}${r.store_name ? ` · ${esc(r.store_name)}` : ""}</p>
         <p style="margin:0 0 6px">Unit ${esc(r.item_id || "—")}${r.seller_id ? ` · ${esc(r.seller_id)} ${esc(r.seller_name || "")}` : ""}</p>
         ${r.reason ? `<p style="margin:0 0 6px">Reason: ${esc(r.reason)}${r.customer_comment ? ` - "${esc(r.customer_comment)}"` : ""}</p>` : ""}
