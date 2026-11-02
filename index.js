@@ -183,8 +183,29 @@ function splitStreetAndHouseNumber(addressLine1, addressLine2 = "") {
     };
   }
 
+  /*
+   * 1b. A Belgian box number: "Heidestraat 94 BUS4", "Kerkstraat 12 bus 3",
+   *     "Rue Royale 5 bte 2".
+   *
+   *     Flats in Belgium share the house number and are told apart by the
+   *     bus, so the bus is part of where the parcel goes but not of the
+   *     number. It goes on the second address line, where the courier
+   *     prints it. ORD-030744 (bol, 02-11-2026) could not get a label at all,
+   *     and "Kerkstraat 12 bus 3" was worse: rule 2 read it as number 3.
+   *     So this runs first.
+   */
+  let match = line1.match(/^(.*\S)\s+(\d+[a-zA-Z]?)\s*,?\s*(bus|bte|boîte|boite|box)\s*\.?\s*([a-zA-Z0-9]+)$/i);
+  if (match) {
+    return {
+      street: asText(match[1]),
+      houseNumber: asText(match[2]),
+      addition: `${match[3].toLowerCase()} ${asText(match[4])}`,
+      usedAddress2AsHouseNumber: false
+    };
+  }
+
   // 2. Standard format: "Kalverstraat 12", "Dorpsweg 15A", "Street 84-1"
-  let match = line1.match(/^(.*\S)\s+(\d+[a-zA-Z0-9\-\/]*)$/);
+  match = line1.match(/^(.*\S)\s+(\d+[a-zA-Z0-9\-\/]*)$/);
   if (match) {
     return {
       street: asText(match[1]),
@@ -390,7 +411,7 @@ function extractCustomerAddress(shopifyOrder) {
     throw new Error("Shopify order missing shipping address");
   }
 
-  const { street, houseNumber } = splitStreetAndHouseNumber(
+  const { street, houseNumber, addition } = splitStreetAndHouseNumber(
     addr.address1 || "",
     addr.address2 || ""
   );
@@ -400,7 +421,7 @@ function extractCustomerAddress(shopifyOrder) {
     company: addr.company || "",
     address1: street,
     houseNumber,
-    address2: addr.address2 || "",
+    address2: [addr.address2, addition].filter(Boolean).join(" "),
     city: addr.city || "",
     postalCode: addr.zip || "",
     country: addr.country_code || "",
@@ -445,14 +466,14 @@ async function getOutboundShippingOptionCode(countryCode) {
 function customerAddressFromOrderFields(orderFields) {
   const line = asText(orderFields["Customer Address"]);
 
-  const { street, houseNumber } = splitStreetAndHouseNumber(line, "");
+  const { street, houseNumber, addition } = splitStreetAndHouseNumber(line, "");
 
   return {
     name: asText(orderFields["Customer Name"]),
     company: "",
     address1: street || line,
     houseNumber,
-    address2: "",
+    address2: addition || "",
     city: asText(orderFields["Customer City"]),
     postalCode: asText(orderFields["Customer Zipcode"]),
     country: asText(orderFields["Customer Country"]).toUpperCase(),
