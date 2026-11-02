@@ -2818,6 +2818,40 @@ app.post("/api/product-info", async (req, res) => {
 });
 
 /*
+ * Returns: a pair coming back off a sale. The list and every rule live in
+ * the Lojiq portal (admin/returns.js); this only passes the scan through, so
+ * the person at the table answers one question - OK or flaw - and the
+ * portal does the books, the payout and the stock.
+ */
+async function returnsCall(res, pathName, body) {
+  try {
+    const data = await callLojiq(pathName, body, { timeoutMs: 120000 });
+    return res.status(data.ok ? 200 : data.httpStatus || 502).json(data);
+  } catch (error) {
+    console.error(`${pathName} failed:`, error.message);
+    return res.status(502).json({ ok: false, error: error.message });
+  }
+}
+
+app.post("/api/returns/match", (req, res) =>
+  returnsCall(res, "/api/internal/returns/match", { sku: asText(req.body?.sku), size: asText(req.body?.size) })
+);
+
+app.post("/api/returns/open", (req, res) =>
+  returnsCall(res, "/api/internal/returns/open", { q: asText(req.body?.q) })
+);
+
+app.post("/api/returns/receive", (req, res) =>
+  returnsCall(res, "/api/internal/returns/receive", {
+    id: asText(req.body?.id),
+    verdict: asText(req.body?.verdict),
+    note: asText(req.body?.note),
+    barcode: asText(req.body?.barcode),
+    by: asText(req.body?.by) || "WMS"
+  })
+);
+
+/*
  * Partners: sellers who keep pairs in our warehouse.
  *
  * Marked by a Default VAT Type on Sellers Database - the field exists only
