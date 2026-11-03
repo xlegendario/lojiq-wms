@@ -136,11 +136,25 @@
     <div class="card" id="judgeCard" hidden>
       <h2 id="judgeTitle"></h2>
       <div id="judgeInfo" class="muted"></div>
+      <div id="okThenBox" hidden style="margin-top:12px">
+        <label class="muted" for="okThen">If it is OK, this seller's pair:</label>
+        <select id="okThen">
+          <option value="keep">Keep it, back on sale (seller is paid)</option>
+          <option value="send_back">Send it back to the seller (he sends the label)</option>
+        </select>
+      </div>
       <div class="row">
         <button class="btn ok" type="button" id="okButton">✓ OK - in order</button>
         <button class="btn flaw" type="button" id="flawButton">✕ It has a flaw</button>
       </div>
       <div id="flawBox" hidden style="margin-top:16px">
+        <div id="flawThenBox" hidden style="margin-bottom:8px">
+          <label class="muted" for="flawThen">This pair with a flaw:</label>
+          <select id="flawThen">
+            <option value="send_back">Send it back to the seller (he sends the label)</option>
+            <option value="troubled">Keep it - Troubled Stock (seller is paid)</option>
+          </select>
+        </div>
         <textarea id="flawNote" placeholder="What is wrong? (worn, damaged box, wrong size, fake…)"></textarea>
         <div class="row"><button class="btn flaw" type="button" id="flawSave">Save with flaw</button></div>
       </div>
@@ -292,6 +306,10 @@
 
     /* ---------------- OK or flaw ---------------- */
 
+    // Whose pair it is, as the admin decides it (admin/returns.js ownerOf).
+    const ownerOf = (r) => r.unit_type === "Partner Consignment" ? "partner"
+      : (["Consignment", "Direct"].includes(r.unit_type) || /^(CS|OUT)-/.test(r.item_id || "")) && r.seller_id ? "seller" : "own";
+
     function drawJudge() {
       const r = state.chosen;
       $("judgeTitle").textContent = `RET-${r.return_number} · ${r.sku} · ${r.size}`;
@@ -306,6 +324,12 @@
         <div style="clear:both"></div>`;
       $("flawBox").hidden = true;
       $("flawNote").value = "";
+      // A seller's or partner's pair gets a second question; ours does not.
+      const owner = ownerOf(r);
+      $("okThenBox").hidden = owner !== "seller";
+      $("flawThenBox").hidden = owner === "own";
+      $("okThen").value = "keep";
+      $("flawThen").value = "send_back";
       show("judgeCard");
     }
 
@@ -322,6 +346,7 @@
         const data = await post("/api/returns/receive", {
           id: r.id,
           verdict,
+          then: verdict === "ok" ? ($("okThenBox").hidden ? "" : $("okThen").value) : ($("flawThenBox").hidden ? "" : $("flawThen").value),
           note,
           // Learned only when it was typed in by hand.
           barcode: state.learn ? state.barcode : ""

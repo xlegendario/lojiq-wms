@@ -2866,6 +2866,7 @@ app.post("/api/returns/receive", (req, res) =>
   returnsCall(res, "/api/internal/returns/receive", {
     id: asText(req.body?.id),
     verdict: asText(req.body?.verdict),
+    then: asText(req.body?.then),
     note: asText(req.body?.note),
     barcode: asText(req.body?.barcode),
     by: asText(req.body?.by) || "WMS"
