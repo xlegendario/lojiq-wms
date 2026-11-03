@@ -168,7 +168,7 @@
     const $ = (id) => document.getElementById(id);
     const esc = (value) => String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
     const day = (value) => (value ? new Date(value).toLocaleDateString("nl-NL") : "");
-    const SOURCE = { store_order: "Store order", member_wtb: "Member WTB", woovin: "Woovin", bol: "bol", manual: "By hand" };
+    const SOURCE = { store_order: "Store order", member_wtb: "Member WTB", woovin: "Woovin", bol: "bol", manual: "By hand", external: "External" };
 
     // What was scanned, so a barcode typed in by hand can be learned.
     const state = { barcode: "", learn: false, sku: "", size: "", list: [], all: false, chosen: null };
