@@ -3602,6 +3602,30 @@ app.post("/api/receive-parcel", async (req, res) => {
       matchedOrderRecordId = arrivedForOrder.id;
       matchedOrderId = orderId;
 
+      /*
+       * The order died while the pair was on its way: the buyer cancelled,
+       * and we took the pair in anyway (order-decision take_in) or he had
+       * already posted it. There is no buyer to fetch a label for - asking
+       * the marketplace would print a label for a sale that no longer
+       * exists. The pair is a return now, closed by the Returns scan.
+       */
+      const deadStatus = asText(arrivedForOrder.fields["Fulfillment Status"]);
+
+      if (["Cancelled", "Returned"].includes(deadStatus)) {
+        await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).update(arrivedForOrder.id, {
+          "Inbound Status": "Received"
+        });
+
+        return res.status(200).json({
+          message: `${orderId} is ${deadStatus}: no label to fetch. This pair is a return - scan it under Returns.`,
+          exists: true,
+          flow_type: "marketplace_inbound_cancelled",
+          matched_unfulfilled_order: true,
+          order_id: orderId,
+          label_ready: false
+        });
+      }
+
       await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).update(arrivedForOrder.id, {
         "Inbound Status": "Received"
       });
@@ -5207,7 +5231,15 @@ async function createMarketplaceLabel({
     sell through. He now sends the pair here with this label and we send it
     on with Woovin's, which is why the same order carries two of them.
   */
-  toWarehouse = false
+  toWarehouse = false,
+  /*
+    A cancelled order whose pair we take in after all (order-decision).
+
+    Its own parcel, never bundled with his other orders; the courier from
+    the routing table, because this consignor may well be reachable by DPD;
+    and no "Shipping Label Ready" here - the caller says "new label" itself.
+  */
+  takeIn = false
 }) {
   const customerAddress = toWarehouse ? warehouseAddress() : customerAddressFromOrderFields(orderFields);
 
@@ -5230,7 +5262,7 @@ async function createMarketplaceLabel({
     Found before the carrier is picked, because the weight depends on it and
     the weight decides the price of the label we are about to buy.
   */
-  const siblings = await parcelSiblingOrders({ orderRecord, orderFields, toWarehouse });
+  const siblings = takeIn ? [] : await parcelSiblingOrders({ orderRecord, orderFields, toWarehouse });
 
   const parcel = [
     { recordId: orderRecord.id, fields: orderFields },
@@ -5276,7 +5308,7 @@ async function createMarketplaceLabel({
     does not reach him, so asking DPD to collect it would fail for exactly
     the same reason.
   */
-  let carrier = toWarehouse ? "UPS" : await pickMarketplaceCarrier(sellerCountryCode);
+  let carrier = toWarehouse && !takeIn ? "UPS" : await pickMarketplaceCarrier(sellerCountryCode);
 
   let method = await findSendcloudShippingMethod({
     carrier,
@@ -5417,8 +5449,10 @@ async function createMarketplaceLabel({
     Authorization: buildBasicAuthHeader(SENDCLOUD_PUBLIC_KEY, SENDCLOUD_SECRET_KEY)
   });
 
+  // A taken-in pair keeps its old label's file apart: a link already in
+  // Discord must not quietly turn into the new label.
   const uploadedPdfUrl = await uploadPdfToR2({
-    key: `shipping-labels/${sanitizeFileName(orderId)}.pdf`,
+    key: `shipping-labels/${sanitizeFileName(orderId)}${takeIn ? "-inbound" : ""}.pdf`,
     pdfBuffer: labelPdfBuffer
   });
 
@@ -5496,6 +5530,10 @@ async function createMarketplaceLabel({
     holds the pair and reads the deal channel - so that channel wins when it
     exists, exactly as it does for a store order.
   */
+  if (takeIn) {
+    return { ok: true, carrier, method: method.name, tracking_number: sendcloud.trackingNumber, label_url: uploadedPdfUrl };
+  }
+
   const claimedChannelId = asText(orderFields["Claimed Channel ID"]);
 
   const sellerRecord = claimedChannelId
@@ -6334,107 +6372,320 @@ app.post("/send-label-to-channel", async (req, res) => {
   }
 });
 
+/* ---------------- a cancelled order, towards its consignor ---------------- */
+
 /*
- * That label does not count any more: the buyer cancelled.
+ * When an order dies before it ships (the shopper cancelled at bol or
+ * Woovin, or we cancelled it in the admin), whoever holds its label must not
+ * post the parcel, and a label we paid for must not stay live. Three steps,
+ * each sent where the label went (labelDestination):
  *
- * Whoever holds the label must not post the parcel - bol (ORD-030734,
- * 02-11-2026) cancels on the shopper's word and pays nothing for a pair that
- * goes out anyway. Sent where the label went, through labelDestination, so
- * the notice sits right under the label it cancels. The Sendcloud label
- * itself is left for a person to cancel.
+ *   hold       /send-label-void-to-channel - "please don't ship yet", and
+ *              the label to the buyer cancelled in Sendcloud: the buyer is
+ *              gone, whatever we decide about the pair
+ *   decision   /api/internal/order-decision, from the admin's choice:
+ *                cancelled   the seller keeps the pair - "order cancelled",
+ *                            every label of ours on the order cancelled
+ *                take_in     we take the pair - "you can now ship" with the
+ *                            label to us he already has (Mads, Pearl), or a
+ *                            fresh label to us
+ *                void        the pair is not with the consignor - only the
+ *                            labels cancelled, nobody told
+ *   ping       /api/internal/cancel-ping - us, so somebody decides
  *
+ * The wording never names the marketplace or the reason (Dario, 04-11-2026).
  * Behind COUNTER_OFFERS_SECRET, like every other service call that posts to
  * a consignor.
  */
+function serviceCallAllowed(req) {
+  const secret = process.env.COUNTER_OFFERS_SECRET;
+
+  return Boolean(secret) && asText(req.headers["x-kc-secret"]) === secret;
+}
+
+/*
+ * Cancel one of our Sendcloud labels, found by its tracking number.
+ *
+ * No parcel id is kept on the order, and none is needed: Sendcloud finds
+ * its own parcel by tracking. Not found means it was never our label - a
+ * Woovin label, or one a store made itself - and there is nothing to pay
+ * for. Sendcloud refuses once the carrier has the parcel; that comes back
+ * as the reason, for a person to look at.
+ */
+async function cancelSendcloudLabel(trackingNumber) {
+  const tracking = asText(trackingNumber);
+
+  if (!tracking) return { tracking, cancelled: false, skipped: "no tracking" };
+
+  const auth = { Authorization: buildBasicAuthHeader(SENDCLOUD_PUBLIC_KEY, SENDCLOUD_SECRET_KEY) };
+
+  const found = await fetch(`${SENDCLOUD_PARCELS_URL}?tracking_number=${encodeURIComponent(tracking)}`, { headers: auth });
+  const foundBody = await found.json().catch(() => ({}));
+
+  if (!found.ok) return { tracking, cancelled: false, error: `Sendcloud lookup ${found.status}: ${JSON.stringify(foundBody).slice(0, 200)}` };
+
+  const parcel = (foundBody.parcels || [])[0];
+
+  if (!parcel) return { tracking, cancelled: false, skipped: "not a Sendcloud label of ours" };
+
+  if (/cancel/i.test(asText(parcel.status?.message))) {
+    return { tracking, cancelled: true, already: true, parcel: parcel.id };
+  }
+
+  const res = await fetch(`${SENDCLOUD_PARCELS_URL}/${parcel.id}/cancel`, { method: "POST", headers: auth });
+  const body = await res.json().catch(() => ({}));
+
+  if (!res.ok) {
+    return {
+      tracking,
+      cancelled: false,
+      parcel: parcel.id,
+      error: asText(body?.message || body?.error?.message) || `Sendcloud answered ${res.status}`
+    };
+  }
+
+  return { tracking, cancelled: true, parcel: parcel.id, status: asText(body?.status) };
+}
+
+// Product, SKU, size and order, the way every one of these embeds opens.
+function orderEmbedLines(fields, orderId) {
+  return [
+    asText(fields["Product Name"]) || "-",
+    `SKU: ${asText(fields["SKU"]) || asText(fields["SKU (Soft)"]) || "-"}`,
+    `Size: ${asText(fields["Size"]) || "-"}`,
+    "",
+    `Order: ${orderId}`
+  ];
+}
+
+const linkButton = (label, url) => ({ type: 1, components: [{ type: 2, style: 5, label, url }] });
+
+/*
+ * One message to wherever labelDestination says: the Lojiq bot for a store,
+ * the channel, or a DM.
+ */
+async function postToLabelDestination(destination, { embed, components = [] }, orderId) {
+  embed.footer = { text: destination.storeSeller ? "Lojiq" : "Kickz Caviar" };
+  embed.timestamp = new Date().toISOString();
+
+  if (destination.storeSeller) {
+    if (!destination.channelId) throw new Error(`Store consignor has no Labels Channel ID for ${orderId}`);
+
+    const response = await fetch(`${LOJIQ_BOT_URL.replace(/\/$/, "")}/post-member-wtb-store-message`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-kc-secret": process.env.COUNTER_OFFERS_SECRET || "" },
+      body: JSON.stringify({ channel_id: destination.channelId, content: "", embeds: [embed], components })
+    });
+
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) throw new Error(`Lojiq bot refused the message for ${orderId}: ${data.error || response.status}`);
+
+    return "lojiq-bot";
+  }
+
+  if (!process.env.DISCORD_TOKEN) throw new Error("Missing DISCORD_TOKEN");
+
+  const discord = (path, body) =>
+    fetch(`https://discord.com/api/v10${path}`, {
+      method: "POST",
+      headers: { "Authorization": `Bot ${process.env.DISCORD_TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+
+  let channelId = destination.channelId;
+
+  if (!channelId) {
+    const dm = await discord("/users/@me/channels", { recipient_id: destination.discordUserId });
+    const dmData = await dm.json().catch(() => ({}));
+
+    if (!dm.ok || !dmData.id) throw new Error(`Failed to create DM: ${dm.status} ${JSON.stringify(dmData)}`);
+
+    channelId = dmData.id;
+  }
+
+  const sent = await discord(`/channels/${channelId}/messages`, { embeds: [embed], components });
+
+  if (!sent.ok) throw new Error(`Discord API error: ${sent.status} ${await sent.text().catch(() => "")}`);
+
+  return destination.channelId ? "channel" : "dm";
+}
+
 app.post("/send-label-void-to-channel", async (req, res) => {
   try {
-    const secret = process.env.COUNTER_OFFERS_SECRET;
-
-    if (!secret || asText(req.headers["x-kc-secret"]) !== secret) {
-      return res.status(401).json({ error: "Not allowed" });
-    }
+    if (!serviceCallAllowed(req)) return res.status(401).json({ error: "Not allowed" });
 
     const recordId = asText(req.body?.recordId);
 
-    if (!recordId) {
-      return res.status(400).json({ error: "Missing recordId" });
-    }
+    if (!recordId) return res.status(400).json({ error: "Missing recordId" });
 
     const record = await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).find(recordId);
     const fields = record.fields || {};
+    const orderId = asText(fields["Order ID"]) || record.id;
+
+    // The label to the buyer is dead whatever happens next.
+    const sendcloud = await cancelSendcloudLabel(fields["Tracking Number"]).catch((error) => ({ cancelled: false, error: error.message }));
+
     const destination = await labelDestination(record);
 
     if (destination.skipped) {
-      return res.json({ ok: true, told: false, skipped: destination.skipped });
+      return res.json({ ok: true, told: false, skipped: destination.skipped, sendcloud });
     }
 
-    const orderId = asText(fields["Order ID"]) || record.id;
+    const via = await postToLabelDestination(destination, {
+      embed: {
+        title: "🚫 PLEASE DON’T SHIP YET",
+        color: 0xe74c3c,
+        description: [...orderEmbedLines(fields, orderId), "", "The order is troubled and we are currently reviewing what to do."].join("\n")
+      }
+    }, orderId);
 
-    // Never names the marketplace or why: the consignor only needs to hold
-    // the parcel until we have decided (wording agreed with Dario 04-11-2026).
-    const embed = {
-      title: "🚫 PLEASE DON’T SHIP YET",
-      color: 0xe74c3c,
-      description: [
-        asText(fields["Product Name"]) || "-",
-        `SKU: ${asText(fields["SKU"]) || "-"}`,
-        `Size: ${asText(fields["Size"]) || "-"}`,
-        "",
-        `Order: ${orderId}`,
-        "",
-        "The order is troubled and we are currently reviewing what to do."
-      ].join("\n"),
-      footer: { text: destination.storeSeller ? "Lojiq" : "Kickz Caviar" },
-      timestamp: new Date().toISOString()
+    return res.json({ ok: true, told: true, via, sendcloud });
+  } catch (error) {
+    console.error("send-label-void-to-channel failed:", error);
+    return res.status(500).json({ error: "Failed to send the label void notice", details: error.message });
+  }
+});
+
+app.post("/api/internal/order-decision", async (req, res) => {
+  try {
+    if (!serviceCallAllowed(req)) return res.status(401).json({ error: "Not allowed" });
+
+    const recordId = asText(req.body?.recordId);
+    const decision = asText(req.body?.decision);
+
+    if (!recordId) return res.status(400).json({ error: "Missing recordId" });
+    if (!["cancelled", "take_in", "void"].includes(decision)) return res.status(400).json({ error: "Unknown decision" });
+
+    const record = await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).find(recordId);
+    const fields = record.fields || {};
+    const orderId = asText(fields["Order ID"]) || record.id;
+    const inboundLabel = asText(fields["Inbound Label URL"]);
+    const sendcloud = [];
+
+    const cancel = async (tracking) => {
+      if (!asText(tracking)) return;
+      sendcloud.push(await cancelSendcloudLabel(tracking).catch((error) => ({ tracking, cancelled: false, error: error.message })));
     };
 
-    if (destination.storeSeller) {
-      if (!destination.channelId) throw new Error(`Store consignor has no Labels Channel ID for ${orderId}`);
+    // The label to the buyer never counts again; the one to us only when we
+    // take the pair.
+    await cancel(fields["Tracking Number"]);
+    // A label to us that already carried the pair cannot be cancelled and
+    // needs no cancelling.
+    if (decision !== "take_in" && asText(fields["Inbound Status"]) === "Awaiting Shipment") await cancel(fields["Inbound Tracking Number"]);
 
-      const response = await fetch(`${LOJIQ_BOT_URL.replace(/\/$/, "")}/post-member-wtb-store-message`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-kc-secret": secret },
-        body: JSON.stringify({ channel_id: destination.channelId, content: "", embeds: [embed], components: [] })
-      });
+    if (decision === "void") return res.json({ ok: true, told: false, sendcloud });
 
-      const data = await response.json().catch(() => ({}));
+    let message;
+    let label = null;
 
-      if (!response.ok) throw new Error(`Lojiq bot refused the notice for ${orderId}: ${data.error || response.status}`);
+    if (decision === "cancelled") {
+      message = {
+        embed: {
+          title: "❌ ORDER CANCELLED",
+          color: 0x95a5a6,
+          description: [...orderEmbedLines(fields, orderId), "", "This order has been cancelled. Please don't ship this pair - you can keep it."].join("\n")
+        }
+      };
+    } else if (inboundLabel) {
+      // He already has a label to our warehouse (Mads, Pearl): that one goes.
+      message = {
+        embed: {
+          title: "✅ YOU CAN NOW SHIP",
+          color: 0x00b894,
+          description: [
+            ...orderEmbedLines(fields, orderId),
+            ...(asText(fields["Inbound Tracking Number"]) ? [`Tracking: ${asText(fields["Inbound Tracking Number"])}`] : []),
+            "",
+            "Please ship the pair to our warehouse with the label you already have."
+          ].join("\n")
+        },
+        components: [linkButton("📄 Download label", inboundLabel)]
+      };
+    } else {
+      label = await createMarketplaceLabel({ orderRecord: record, orderFields: fields, orderId, toWarehouse: true, takeIn: true });
 
-      return res.json({ ok: true, told: true, via: "lojiq-bot" });
+      message = {
+        embed: {
+          title: "📦 NEW SHIPPING LABEL",
+          color: 0x2f80ed,
+          description: [
+            ...orderEmbedLines(fields, orderId),
+            `Tracking: ${label.tracking_number || "-"}`,
+            "",
+            "This is a new label, so please download the fresh one.",
+            "Please ship the pair to our warehouse with this label."
+          ].join("\n")
+        },
+        components: [linkButton("📄 Download new label", label.label_url)]
+      };
     }
 
+    const destination = await labelDestination(record);
+
+    if (destination.skipped) {
+      return res.json({ ok: true, told: false, skipped: destination.skipped, sendcloud, label });
+    }
+
+    const via = await postToLabelDestination(destination, message, orderId);
+
+    return res.json({ ok: true, told: true, via, sendcloud, label });
+  } catch (error) {
+    console.error("order-decision failed:", error);
+    return res.status(500).json({ error: "Failed to carry out the decision", details: error.message });
+  }
+});
+
+/*
+ * Us, so somebody decides. A cancelled order with a pair on it waits on the
+ * Returns tab, and a tab nobody opens decides nothing.
+ * CANCEL_ALERT_CHANNEL_ID picks the channel; without it, the internal
+ * fallback channel the labels use.
+ */
+app.post("/api/internal/cancel-ping", async (req, res) => {
+  try {
+    if (!serviceCallAllowed(req)) return res.status(401).json({ error: "Not allowed" });
     if (!process.env.DISCORD_TOKEN) throw new Error("Missing DISCORD_TOKEN");
 
-    const discord = (path, body) =>
-      fetch(`https://discord.com/api/v10${path}`, {
-        method: "POST",
-        headers: { "Authorization": `Bot ${process.env.DISCORD_TOKEN}`, "Content-Type": "application/json" },
-        body: JSON.stringify(body)
-      });
+    const recordId = asText(req.body?.recordId);
+    const returnNumber = asText(req.body?.return_number);
+    const notes = (Array.isArray(req.body?.notes) ? req.body.notes : []).map(asText).filter(Boolean);
 
-    let channelId = destination.channelId;
+    if (!recordId) return res.status(400).json({ error: "Missing recordId" });
 
-    if (!channelId) {
-      const dm = await discord("/users/@me/channels", { recipient_id: destination.discordUserId });
-      const dmData = await dm.json().catch(() => ({}));
+    const record = await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).find(recordId);
+    const fields = record.fields || {};
+    const orderId = asText(fields["Order ID"]) || record.id;
+    const channelId = asText(process.env.CANCEL_ALERT_CHANNEL_ID) || "1506989427183058996";
+    const returnsUrl = `${LOJIQ_PORTAL_BASE_URL}/admin/returns`;
 
-      if (!dm.ok || !dmData.id) throw new Error(`Failed to create DM: ${dm.status} ${JSON.stringify(dmData)}`);
-
-      channelId = dmData.id;
-    }
-
-    const sent = await discord(`/channels/${channelId}/messages`, { embeds: [embed] });
+    const sent = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+      method: "POST",
+      headers: { "Authorization": `Bot ${process.env.DISCORD_TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        embeds: [{
+          title: `⚠️ Cancelled order to decide${returnNumber ? `: RET-${returnNumber}` : ""}`,
+          color: 0xf39c12,
+          description: [
+            ...orderEmbedLines(fields, orderId),
+            `Marketplace: ${asText(fields["Marketplace"]) || asText(first(fields["Store Name"])) || "-"}`,
+            "",
+            "The buyer cancelled before it shipped. Decide on the Returns tab what happens to the pair.",
+            ...(notes.length ? ["", ...notes] : [])
+          ].join("\n"),
+          timestamp: new Date().toISOString()
+        }],
+        components: [linkButton("Open Returns", returnsUrl)]
+      })
+    });
 
     if (!sent.ok) throw new Error(`Discord API error: ${sent.status} ${await sent.text().catch(() => "")}`);
 
-    return res.json({ ok: true, told: true, via: destination.channelId ? "channel" : "dm" });
+    return res.json({ ok: true });
   } catch (error) {
-    console.error("send-label-void-to-channel failed:", error);
-    return res.status(500).json({
-      error: "Failed to send the label void notice",
-      details: error.message
-    });
+    console.error("cancel-ping failed:", error);
+    return res.status(500).json({ error: "Failed to ping", details: error.message });
   }
 });
 
