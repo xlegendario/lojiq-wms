@@ -2866,6 +2866,7 @@ app.post("/api/returns/receive", (req, res) =>
   returnsCall(res, "/api/internal/returns/receive", {
     id: asText(req.body?.id),
     verdict: asText(req.body?.verdict),
+    then: asText(req.body?.then),
     note: asText(req.body?.note),
     barcode: asText(req.body?.barcode),
     by: asText(req.body?.by) || "WMS"
@@ -6169,6 +6170,77 @@ app.post("/api/request-label", async (req, res) => {
   }
 });
 
+/*
+ * Where an order's label goes: the claimed channel, the WTB channel, the
+ * seller's labels channel, or a DM - and for a Lojiq store, through the
+ * Lojiq bot. One answer for the label and for the notice that cancels it,
+ * so the "do not post this" lands next to the label it is about.
+ *
+ * Returns { skipped } when the label is for us and goes nowhere.
+ */
+async function labelDestination(record) {
+  const fields = record.fields || {};
+
+  /*
+   * Nobody to send it to: the label is for us.
+   *
+   * A pair that was sent to the warehouse first gets the marketplace's
+   * own label the moment it is scanned in, and that lands on this order
+   * like any other label. Posting it to the consignor told them to ship a
+   * pair they had already handed over - ORD-028065 (15-10-2026), where
+   * SE-00930 got the Woovin label after the pair was on our table. We
+   * pack it in Pack & Ship, so it is marked sent and goes nowhere.
+   */
+  if (arrivedAtWarehouse(record)) {
+    return { skipped: "pair arrived at the warehouse" };
+  }
+
+  const claimedChannelId = asText(fields["Claimed Channel ID"]);
+  const wtbChannelId = asText(fields["WTB Created Channel ID"]);
+
+  const targetChannelId = claimedChannelId || wtbChannelId;
+
+  if (targetChannelId) {
+    return { channelId: targetChannelId, discordUserId: "", storeSeller: false, markLabelOk: true };
+  }
+
+  const linkedInventoryUnitIds = Array.isArray(fields["Linked Inventory Unit"])
+    ? fields["Linked Inventory Unit"]
+    : [];
+
+  if (!linkedInventoryUnitIds.length) {
+    throw new Error("No channel ID found and no linked inventory unit found");
+  }
+
+  const inventoryRecord = await airtable(AIRTABLE_INVENTORY_UNITS_TABLE)
+    .find(linkedInventoryUnitIds[0]);
+
+  const sellerRecordId = Array.isArray(inventoryRecord.fields["Seller ID"])
+    ? inventoryRecord.fields["Seller ID"][0]
+    : "";
+
+  if (!sellerRecordId) {
+    throw new Error("No seller linked to inventory unit");
+  }
+
+  const sellerRecord = await airtable(AIRTABLE_SELLERS_TABLE).find(sellerRecordId);
+  const channelId = asText(sellerRecord.fields["Labels Channel ID"]);
+  const discordUserId = asText(sellerRecord.fields["Discord ID"]);
+
+  if (!channelId && !discordUserId) {
+    const sellerCode = asText(sellerRecord.fields["Seller ID"]).trim().toUpperCase();
+
+    // StockX, GOAT: stock that lives here, so nobody to post it to.
+    if (MANUAL_STOCK_SELLER_CODES.includes(sellerCode)) {
+      return { skipped: `${sellerCode} ships from the warehouse` };
+    }
+
+    throw new Error("No channel ID found and seller has no Labels Channel ID or Discord ID");
+  }
+
+  return { channelId, discordUserId, storeSeller: isStoreSellerRecord(sellerRecord), markLabelOk: false };
+}
+
 app.post("/send-label-to-channel", async (req, res) => {
   try {
     const recordId = req.body?.recordId;
@@ -6180,73 +6252,22 @@ app.post("/send-label-to-channel", async (req, res) => {
     const record = await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).find(recordId);
     const fields = record.fields || {};
 
-    /*
-     * Nobody to send it to: the label is for us.
-     *
-     * A pair that was sent to the warehouse first gets the marketplace's
-     * own label the moment it is scanned in, and that lands on this order
-     * like any other label. Posting it to the consignor told them to ship a
-     * pair they had already handed over - ORD-028065 (15-10-2026), where
-     * SE-00930 got the Woovin label after the pair was on our table. We
-     * pack it in Pack & Ship, so it is marked sent and goes nowhere.
-     */
-    if (arrivedAtWarehouse(record)) {
+    const destination = await labelDestination(record);
+
+    if (destination.skipped) {
       await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).update(recordId, {
         "Label Sent To Discord?": true
       });
 
-      return res.json({ ok: true, skipped: "pair arrived at the warehouse" });
+      return res.json({ ok: true, skipped: destination.skipped });
     }
 
-    const claimedChannelId = asText(fields["Claimed Channel ID"]);
-    const wtbChannelId = asText(fields["WTB Created Channel ID"]);
-    
-    let targetChannelId = claimedChannelId || wtbChannelId;
-    let markLabelOk = true;
-    let sellerDiscordId = "";
-    let storeSeller = false;
-    
-    if (!targetChannelId) {
-      const linkedInventoryUnitIds = Array.isArray(fields["Linked Inventory Unit"])
-        ? fields["Linked Inventory Unit"]
-        : [];
-    
-      if (!linkedInventoryUnitIds.length) {
-        throw new Error("No channel ID found and no linked inventory unit found");
-      }
-    
-      const inventoryRecord = await airtable(AIRTABLE_INVENTORY_UNITS_TABLE)
-        .find(linkedInventoryUnitIds[0]);
-    
-      const sellerRecordId = Array.isArray(inventoryRecord.fields["Seller ID"])
-        ? inventoryRecord.fields["Seller ID"][0]
-        : "";
-    
-      if (!sellerRecordId) {
-        throw new Error("No seller linked to inventory unit");
-      }
-    
-      const sellerRecord = await airtable(AIRTABLE_SELLERS_TABLE).find(sellerRecordId);
-      storeSeller = isStoreSellerRecord(sellerRecord);
-      targetChannelId = asText(sellerRecord.fields["Labels Channel ID"]);
-      sellerDiscordId = asText(sellerRecord.fields["Discord ID"]);
-      markLabelOk = false;
-      
-      if (!targetChannelId && !sellerDiscordId) {
-        const sellerCode = asText(sellerRecord.fields["Seller ID"]).trim().toUpperCase();
-
-        // StockX, GOAT: stock that lives here, so nobody to post it to.
-        if (MANUAL_STOCK_SELLER_CODES.includes(sellerCode)) {
-          await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).update(recordId, {
-            "Label Sent To Discord?": true
-          });
-
-          return res.json({ ok: true, skipped: `${sellerCode} ships from the warehouse` });
-        }
-
-        throw new Error("No channel ID found and seller has no Labels Channel ID or Discord ID");
-      }
-    }
+    const {
+      channelId: targetChannelId,
+      discordUserId: sellerDiscordId,
+      storeSeller,
+      markLabelOk
+    } = destination;
 
     const permanentLabelUrl = asText(fields["Shipping Label URL (Permanent)"]);
     const labelField = fields["Shipping Label"];
@@ -6308,6 +6329,110 @@ app.post("/send-label-to-channel", async (req, res) => {
     console.error("send-label-to-channel failed:", error);
     return res.status(500).json({
       error: "Failed to send label",
+      details: error.message
+    });
+  }
+});
+
+/*
+ * That label does not count any more: the buyer cancelled.
+ *
+ * Whoever holds the label must not post the parcel - bol (ORD-030734,
+ * 02-11-2026) cancels on the shopper's word and pays nothing for a pair that
+ * goes out anyway. Sent where the label went, through labelDestination, so
+ * the notice sits right under the label it cancels. The Sendcloud label
+ * itself is left for a person to cancel.
+ *
+ * Behind COUNTER_OFFERS_SECRET, like every other service call that posts to
+ * a consignor.
+ */
+app.post("/send-label-void-to-channel", async (req, res) => {
+  try {
+    const secret = process.env.COUNTER_OFFERS_SECRET;
+
+    if (!secret || asText(req.headers["x-kc-secret"]) !== secret) {
+      return res.status(401).json({ error: "Not allowed" });
+    }
+
+    const recordId = asText(req.body?.recordId);
+
+    if (!recordId) {
+      return res.status(400).json({ error: "Missing recordId" });
+    }
+
+    const record = await airtable(AIRTABLE_UNFULFILLED_ORDERS_LOG_TABLE).find(recordId);
+    const fields = record.fields || {};
+    const destination = await labelDestination(record);
+
+    if (destination.skipped) {
+      return res.json({ ok: true, told: false, skipped: destination.skipped });
+    }
+
+    const orderId = asText(fields["Order ID"]) || record.id;
+
+    // Never names the marketplace or why: the consignor only needs to hold
+    // the parcel until we have decided (wording agreed with Dario 04-11-2026).
+    const embed = {
+      title: "🚫 PLEASE DON’T SHIP YET",
+      color: 0xe74c3c,
+      description: [
+        asText(fields["Product Name"]) || "-",
+        `SKU: ${asText(fields["SKU"]) || "-"}`,
+        `Size: ${asText(fields["Size"]) || "-"}`,
+        "",
+        `Order: ${orderId}`,
+        "",
+        "The order is troubled and we are currently reviewing what to do."
+      ].join("\n"),
+      footer: { text: destination.storeSeller ? "Lojiq" : "Kickz Caviar" },
+      timestamp: new Date().toISOString()
+    };
+
+    if (destination.storeSeller) {
+      if (!destination.channelId) throw new Error(`Store consignor has no Labels Channel ID for ${orderId}`);
+
+      const response = await fetch(`${LOJIQ_BOT_URL.replace(/\/$/, "")}/post-member-wtb-store-message`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-kc-secret": secret },
+        body: JSON.stringify({ channel_id: destination.channelId, content: "", embeds: [embed], components: [] })
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) throw new Error(`Lojiq bot refused the notice for ${orderId}: ${data.error || response.status}`);
+
+      return res.json({ ok: true, told: true, via: "lojiq-bot" });
+    }
+
+    if (!process.env.DISCORD_TOKEN) throw new Error("Missing DISCORD_TOKEN");
+
+    const discord = (path, body) =>
+      fetch(`https://discord.com/api/v10${path}`, {
+        method: "POST",
+        headers: { "Authorization": `Bot ${process.env.DISCORD_TOKEN}`, "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+
+    let channelId = destination.channelId;
+
+    if (!channelId) {
+      const dm = await discord("/users/@me/channels", { recipient_id: destination.discordUserId });
+      const dmData = await dm.json().catch(() => ({}));
+
+      if (!dm.ok || !dmData.id) throw new Error(`Failed to create DM: ${dm.status} ${JSON.stringify(dmData)}`);
+
+      channelId = dmData.id;
+    }
+
+    const sent = await discord(`/channels/${channelId}/messages`, { embeds: [embed] });
+
+    if (!sent.ok) throw new Error(`Discord API error: ${sent.status} ${await sent.text().catch(() => "")}`);
+
+    return res.json({ ok: true, told: true, via: destination.channelId ? "channel" : "dm" });
+  } catch (error) {
+    console.error("send-label-void-to-channel failed:", error);
+    return res.status(500).json({
+      error: "Failed to send the label void notice",
       details: error.message
     });
   }
